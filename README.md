@@ -27,6 +27,8 @@ The project is divided into two parts: fluid simulation and fluid particle visua
 2. Solution:
     In order to make more use of GPU, here we will implement neighbor searching on GPU. The method starts with applying z-index calculation for each particle and parallel radix-sort in CUDA, which keeps the spatial information while indexing. Thus, for each block we just store its contained particle number and the first particle index. Then we compute density, force, acceleration and velocity, so that we can update positions of particles in the next frame. And so on so forth.
 
+    <img src="fig/Z-index.png" width = "500">
+
     Here are explainations from [Reference](http://maverick.inria.fr/~Prashant.Goswami/Research/Papers/SCA10_SPH.pdf)
 
     <img src="fig/CUDA Block.png" width="500">
@@ -40,6 +42,7 @@ The project is divided into two parts: fluid simulation and fluid particle visua
 We will choose one of the following methods to demonstrate our result.
 
 1. Using OpenGL for rendering particles.
+
 2. Export particle positions in each frame. Load the sequence in other engines (Houdini/Blender) for rendering.
 
 ## Current Progress
