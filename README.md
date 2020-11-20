@@ -20,14 +20,16 @@ The project is divided into two parts: fluid simulation and fluid particle visua
 ### Fluid Simulation
 1. Problems:
     The most time consuming part in SPH simulation is neighbor search. Previously, neighbor search was executed on CPU and GPU was only used for the remaining part. So as the number of particles increases, the running time of neighbor search will increase dramatically.
+
 2. Solution:
     In order to make more use of GPU, here we will implement neighbor searching on GPU. The method starts with applying z-index calculation for each particle and parallel radix-sort in CUDA, which keeps the spatial information while indexing. Thus, for each block we just store its contained particle number and the first particle index. Then we compute density, force, acceleration and velocity, so that we can update positions of particles in the next frame. And so on so forth.
+
     Here are explainations from [Reference](http://maverick.inria.fr/~Prashant.Goswami/Research/Papers/SCA10_SPH.pdf)
-    
+
     <img src="fig/CUDA Block.png" width="350">
-    
+
     For each non-empty block in B, a CUDA block is generated in B' and launched with N threads (N = 4 here).
-    
+
     <img src="fig/CUDA Block and threads.png" width="350">
 
 ### Particle Visualization
