@@ -45,6 +45,7 @@ We will choose one of the following methods to demonstrate our result.
 ## Current Progress
 
 We implement SPH on 2 dimension using python and Taichi lib.
+
 Next step is to use C++ and CUDA to implement 3D SPH.
 
 <img src="fig/WCSPH 2D.gif" width="500">  
