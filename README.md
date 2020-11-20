@@ -7,6 +7,7 @@ Weakly compressible Smoothed-particle hydrodynamics (WCSPH), as one of the fluid
 ## Environment
 
 Windows + Visual Studio
+
 Language and Libraries: C++, CUDA, OpenGL/Houdini/Blender
 
 ## General Procedure
