@@ -10,7 +10,7 @@ Windows + Visual Studio
 Language and Libraries: C++, CUDA, OpenGL/Houdini/Blender
 
 ## General Procedure
-<img src="fig/WCSPH 2D.gif" width="350">  
+<img src="fig/Flow Chart Diagram.png" width="350">  
 
 ## Solution
 
@@ -26,14 +26,17 @@ The project is divided into two parts: fluid simulation and fluid particle visua
 
     Here are explainations from [Reference](http://maverick.inria.fr/~Prashant.Goswami/Research/Papers/SCA10_SPH.pdf)
 
-    <img src="fig/CUDA Block.png" width="350">
+    <img src="fig/CUDA Block.png" width="500">
 
     For each non-empty block in B, a CUDA block is generated in B' and launched with N threads (N = 4 here).
 
-    <img src="fig/CUDA Block and threads.png" width="350">
+    <img src="fig/CUDA Block and threads.png" width="500">
 
 ### Particle Visualization
 We will choose one of the following methods to demonstrate our result.
 
 1. Using OpenGL for rendering particles.
 2. Export particle positions in each frame. Load the sequence in other engines (Houdini/Blender) for rendering.
+
+## Expected Result
+<img src="fig/WCSPH 2D.gif" width="500">  
