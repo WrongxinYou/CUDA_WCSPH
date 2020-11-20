@@ -11,6 +11,7 @@ Windows + Visual Studio
 Language and Libraries: C++, CUDA, OpenGL/Houdini/Blender
 
 ## General Procedure
+
 <img src="fig/Flow Chart Diagram.png" width="350">  
 
 ## Solution
@@ -19,6 +20,7 @@ We plan to build a real-time SPH solver using GPU acceleration and visualize the
 The project is divided into two parts: fluid simulation and fluid particle visualization.
 
 ### Fluid Simulation
+
 1. Problems:
     The most time consuming part in SPH simulation is neighbor search. Previously, neighbor search was executed on CPU and GPU was only used for the remaining part. So as the number of particles increases, the running time of neighbor search will increase dramatically.
 
@@ -34,10 +36,15 @@ The project is divided into two parts: fluid simulation and fluid particle visua
     <img src="fig/CUDA Block and threads.png" width="500">
 
 ### Particle Visualization
+
 We will choose one of the following methods to demonstrate our result.
 
 1. Using OpenGL for rendering particles.
 2. Export particle positions in each frame. Load the sequence in other engines (Houdini/Blender) for rendering.
 
-## Expected Result
+## Current Progress
+
+We implement SPH on 2 dimension using python and Taichi lib.
+Next step is to use C++ and CUDA to implement 3D SPH.
+
 <img src="fig/WCSPH 2D.gif" width="500">  
