@@ -1,11 +1,11 @@
+#include "Global.h"
 #include "ShaderProgram.h"
 #include "SPHSystem.h"
-#include "sph_host.cuh"
-#include "Global.h"
+#include "SPH_Host.cuh"
 #include <gl/GL.h>
 
-#include "cuda_gl_interop.h"
-#include "cuda_runtime.h"
+#include <cuda_gl_interop.h>
+#include <cuda_runtime.h>
 
 using namespace std;
 
@@ -21,6 +21,9 @@ int mousePos[2];
 bool leftMouseButton = false;
 bool middleMouseButton = false;
 bool rightMouseButton = false;
+bool interrupt = false;
+bool oneFrame = true;
+long frameCnt = 0;
 
 // state of the world
 float landRotate[3] = { 0.0f, 0.0f, 0.0f };
@@ -30,7 +33,7 @@ float landScale[3] = { 1.0f, 1.0f, 1.0f };
 // gl buffers
 ShaderProgram boxProgram, particleProgram;
 unsigned int box_vbo, box_ebo, box_vao;
-unsigned int particle_vbo, color_vbo;
+unsigned int position_vbo, color_vbo;
 
 // gl functions
 void initScene(SPHSystem* sys);
@@ -54,17 +57,21 @@ float board_pos = 0.5f;
 ///////////////////////////////////////////////////////////////////////////////
 // SPH Settings
 ///////////////////////////////////////////////////////////////////////////////
-SPHSystem* sphSys;
+cudaGraphicsResource* cuda_position_resource;
+cudaGraphicsResource* cuda_color_resource;
 
+SPHSystem* sph_host;
+float3* pos_init;
 
 void initFluidSystem() {
-	sphSys = new SPHSystem();
-	sphSys->Initialize();
-	InitDeviceSystem(sphSys);
+	sph_host = new SPHSystem();
+	pos_init = sph_host->InitializePosition();
+	InitDeviceSystem(sph_host, pos_init);
 }
 
 
 int main(int argc, char* argv[]) {
+
 	cout << "Initializing GLUT..." << endl;
 	glutInit(&argc, argv);
 
@@ -96,30 +103,8 @@ int main(int argc, char* argv[]) {
 	}
 
 	initFluidSystem();
-	initScene(sphSys);
+	initScene(sph_host);
 	glutMainLoop();
-}
-
-void createCudaVBO(GLuint* vbo, const unsigned int size) {
-	// create buffer object
-	glGenBuffers(1, vbo);
-	glBindBuffer(GL_ARRAY_BUFFER, *vbo);
-
-	// initialize buffer object
-	glBufferData(GL_ARRAY_BUFFER, size, nullptr, GL_DYNAMIC_DRAW);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	// register buffer object with CUDA
-	checkCudaErrors(cudaGLRegisterBufferObject(*vbo));
-}
-
-void deleteCudaVBO(GLuint* vbo) {
-	glGenBuffers(1, vbo);
-	glDeleteBuffers(1, vbo);
-
-	checkCudaErrors(cudaGLUnregisterBufferObject(*vbo));
-	//CUDA_CHECK(cudaGLUnregisterBufferObject(*vbo));
-	*vbo = NULL;
 }
 
 void initScene(SPHSystem* sys) {
@@ -168,35 +153,30 @@ void initScene(SPHSystem* sys) {
 
 	glEnableVertexAttribArray(0);
 
+	glGenBuffers(1, &position_vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, position_vbo);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(float3) * sys->particle_num, NULL, GL_DYNAMIC_DRAW);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-	// init particle
-	int size = sys->particle_num;
-	// create VBOs
-	createCudaVBO(&particle_vbo, sizeof(float3) * size);
-	createCudaVBO(&color_vbo, sizeof(float3) * size);
-	// initiate shader program
+	checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_position_resource, position_vbo, cudaGraphicsMapFlagsNone));
+
+
+	glGenBuffers(1, &color_vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, color_vbo);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(float4) * sys->particle_num, NULL, GL_DYNAMIC_DRAW);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+	checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_color_resource, color_vbo, cudaGraphicsMapFlagsNone));
+
 	particleProgram.Init("shader/particle.vs", "shader/particle.fs");
 }
 
 void drawParticles() {
-	float3* cuda_particle_vbo;
-	float3* cuda_color_vbo;
-
-	checkCudaErrors(cudaGLMapBufferObject((void**)&cuda_particle_vbo, particle_vbo));
-	checkCudaErrors(cudaGLMapBufferObject((void**)&cuda_color_vbo, color_vbo));
-
-	/*CUDA_CHECK(cudaGLMapBufferObject((void**)cuda_particle_vbo, particle_vbo));
-	CUDA_CHECK(cudaGLMapBufferObject((void**)cuda_color_vbo, color_vbo));*/
 
 	// update color
-	getNextFrame(cuda_particle_vbo, cuda_color_vbo, sphSys);
+	getNextFrame(sph_host, cuda_position_resource, cuda_color_resource);
 
-	checkCudaErrors(cudaGLUnmapBufferObject(particle_vbo));
-	checkCudaErrors(cudaGLUnmapBufferObject(color_vbo));
-	/*CUDA_CHECK(cudaGLUnmapBufferObject(particle_vbo));
-	CUDA_CHECK(cudaGLUnmapBufferObject(color_vbo));*/
-
-	glBindBuffer(GL_ARRAY_BUFFER, particle_vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, position_vbo);
 	glVertexPointer(3, GL_FLOAT, 0, nullptr);
 	glEnableClientState(GL_VERTEX_ARRAY);
 
@@ -204,7 +184,8 @@ void drawParticles() {
 	glColorPointer(3, GL_FLOAT, 0, nullptr);
 	glEnableClientState(GL_COLOR_ARRAY);
 
-	glDrawArrays(GL_POINTS, 0, sphSys->particle_num);
+	glPointSize(5.0f);
+	glDrawArrays(GL_POINTS, 0, sph_host->particle_num);
 
 	glDisableClientState(GL_VERTEX_ARRAY);
 	glDisableClientState(GL_COLOR_ARRAY);
@@ -214,6 +195,12 @@ void drawParticles() {
 void displayFunc() {
 
 	//glutSolidSphere
+	if (interrupt)
+		return;
+
+#ifdef OUTPUT_FRAME_NUM
+	std::cout << "frame: " << frameCnt++ << std::endl;
+#endif // OUTPUT_FRAME_NUM
 
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -228,16 +215,15 @@ void displayFunc() {
 	glScalef(landScale[0], landScale[1], landScale[2]);
 	gluLookAt(box_size / 2.0f, box_size / 2.0f, box_size / 2.0f, box_size * 1.4, box_size, box_size, 0, 1, 0);
 	glGetFloatv(GL_MODELVIEW_MATRIX, m);
-	boxProgram.SetModelViewMatrix(m);
 
 	float p[16];
 	glMatrixMode(GL_PROJECTION);
 	glGetFloatv(GL_PROJECTION_MATRIX, p);
-	boxProgram.SetProjectionMatrix(p);
-
 
 	// draw box
 	boxProgram.Bind();
+	boxProgram.SetModelViewMatrix(m);
+	boxProgram.SetProjectionMatrix(p);
 	glBindVertexArray(box_vao);
 	glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
 	glBindVertexArray(0);
@@ -249,13 +235,34 @@ void displayFunc() {
 	glEnable(GL_VERTEX_PROGRAM_POINT_SIZE_NV);
 	glDepthMask(GL_TRUE);
 	glEnable(GL_DEPTH_TEST);
-	glPushMatrix();
-	drawParticles();
-	glPopMatrix();
 
-	glPopMatrix();
+	particleProgram.SetModelViewMatrix(m);
+	particleProgram.SetProjectionMatrix(p);
+	drawParticles();
+
+	glDisable(GL_POINT_SPRITE_ARB);
+	glDisable(GL_VERTEX_PROGRAM_POINT_SIZE_NV);
 
 	glutSwapBuffers();
+
+	if (oneFrame) {
+		interrupt = true;
+	}
+}
+
+void closeWindow() {
+	FreeDeviceSystem(sph_host);
+	// CPU
+	delete pos_init;
+
+	// GPU
+	glDeleteBuffers(1, &position_vbo);
+	glDeleteBuffers(1, &color_vbo);
+
+	checkCudaErrors(cudaGraphicsUnregisterResource(cuda_position_resource));
+	checkCudaErrors(cudaGraphicsUnregisterResource(cuda_color_resource));
+	checkCudaErrors(cudaDeviceReset());
+	exit(0);
 }
 
 void idleFunc() {
@@ -373,15 +380,6 @@ void mouseButtonFunc(int button, int state, int x, int y) {
 	mousePos[1] = y;
 }
 
-void closeWindow() {
-	FreeDeviceSystem(sphSys);
-	deleteCudaVBO(&particle_vbo);
-	deleteCudaVBO(&color_vbo);
-	checkCudaErrors(cudaDeviceReset());
-	//CUDA_CHECK(cudaDeviceReset());
-	exit(0);
-}
-
 void keyboardFunc(unsigned char key, int x, int y) {
 	switch (key)
 	{
@@ -396,6 +394,16 @@ void keyboardFunc(unsigned char key, int x, int y) {
 	case 'x':
 		// take a screenshot
 		//saveScreenshot("screenshot.jpg");
+		break;
+
+	case 'p':
+		oneFrame = false;
+		interrupt = !interrupt;
+		break;
+
+	case 'f':
+		oneFrame = true;
+		interrupt = false;
 		break;
 	}
 }

@@ -1,88 +1,52 @@
 #include "SPHSystem.h"
+#include "Global.h"
+
 #include <iostream>
-
-int3 operator + (const int3& A, const int3& B) { return { A.x + B.x, A.y + B.y, A.z + B.z }; }
-int3 operator - (const int3& A, const int3& B) { return { A.x - B.x, A.y - B.y, A.z - B.z }; }
-int3 operator * (const int3& A, const int3& B) { return { A.x * B.x, A.y * B.y, A.z * B.z }; }
-int3 operator / (const int3& A, const int3& B) { return { A.x / B.x, A.y / B.y, A.z / B.z }; }
-
-int3 operator + (const int3& A, const int& B) { return { A.x + B, A.y + B, A.z + B }; }
-int3 operator - (const int3& A, const int& B) { return { A.x - B, A.y - B, A.z - B }; }
-int3 operator * (const int3& A, const int& B) { return { A.x * B, A.y * B, A.z * B }; }
-int3 operator / (const int3& A, const int& B) { return { A.x / B, A.y / B, A.z / B }; }
-
-float3 operator + (const float3& A, const float3& B) { return { A.x + B.x, A.y + B.y, A.z + B.z }; }
-float3 operator - (const float3& A, const float3& B) { return{ A.x - B.x, A.y - B.y, A.z - B.z }; }
-float3 operator * (const float3& A, const float3& B) { return { A.x * B.x, A.y * B.y, A.z * B.z }; }
-float3 operator / (const float3& A, const float3& B) { return { A.x / B.x, A.y / B.y, A.z / B.z }; }
-
-float3 operator + (const float3& A, const float& B) { return { A.x + B, A.y + B, A.z + B }; }
-float3 operator - (const float3& A, const float& B) { return { A.x - B, A.y - B, A.z - B }; }
-float3 operator * (const float3& A, const float& B) { return { A.x * B, A.y * B, A.z * B }; }
-float3 operator / (const float3& A, const float& B) { return { A.x / B, A.y / B, A.z / B }; }
-
-float3 operator * (const float3& A, const int3& B) { return { A.x * B.x, A.y * B.y, A.z * B.z }; }
-float3 operator / (const float3& A, const int3& B) { return { A.x / B.x, A.y / B.y, A.z / B.z }; }
-
-std::ostream& operator<<(std::ostream& out, const float3 A)
-{
-	out << "<float3> ( " << A.x << ", " << A.y << ", " << A.z << " )";
-	return out;
-}
-
-// SPHSystem::SPHSystem() {}
 
 SPHSystem::SPHSystem()
 {
-	particle_radius = 1e-3;
-	box_size = { 1, 1 ,1 };
-	box_margin = { 0.1, 0.1, 0.1 };
 
-	particle_num = 27;
-	particle_dim = { 3, 3, 3 };
+	// SPH Parameters
+	dim = 3;
+	particle_dim = make_int3(3, 3, 3);
+	particle_num = particle_dim.x * particle_dim.y * particle_dim.z;
+	particle_radius = 0.1;
 
-	particle_gid = NULL;
-	grid_pid = NULL;
-	grid_pnum = NULL;
+	// Device Parameters
+	block_dim = make_int3(3, 3, 3);
+	block_num = block_dim.x * block_dim.y * block_dim.z;
+	block_size = box_size / block_dim;
 
-	color = NULL;
-	pos_host = NULL;
-	cur_pos = NULL;
-	next_pos = NULL;
-	density = NULL;
-	velocity = NULL;
-	pressure = NULL;
+	// Draw Parameters
+	step_each_frame = 5;
+	box_size = make_float3(1.0, 1.0, 1.0);
+	box_margin = box_size * 0.1;
+
+	// Function Parameters
+	rho0 = 1000.0;  // reference density
+	gamma = 7.0;
+	h = 1.3 * particle_radius;
+	gravity = -9.8 * 30;
+	alpha = 0.3;
+	C0 = 200;
+	CFL_v = 0.20;
+	CFL_a = 0.20;
+	poly6_factor = 315.0 / 64.0 / M_PI;
+	spiky_grad_factor = -45.0 / M_PI;
+	mass = pow(particle_radius, dim) * rho0;
+	time_delta = 0.1 * h / C0;
 }
 
 SPHSystem::~SPHSystem()
 {
-	delete particle_gid;
-	delete grid_pid;
-	delete grid_pnum;
 
-	delete pos_host;
-	delete color;
-	delete cur_pos;
-	delete next_pos;
-	delete density;
-	delete velocity;
-	delete pressure;
 }
 
 
 // Initialize particles position
-void SPHSystem::Initialize()
+float3* SPHSystem::InitializePosition()
 {
-	pos_host = new float3[particle_num];
-
-	std::cout << "float3:  " << sizeof(float3) << std::endl;
-	std::cout << "*float3:  " << sizeof(float3*) << std::endl;
-	std::cout << "int3:  " << sizeof(int3) << std::endl;
-	std::cout << "*int3:  " << sizeof(int3*) << std::endl;
-	std::cout << "float:  " << sizeof(float) << std::endl;
-	std::cout << "*float:  " << sizeof(float*) << std::endl;
-	std::cout << "int:  " << sizeof(int) << std::endl;
-	std::cout << "*int:  " << sizeof(int*) << std::endl;
+	float3* pos_init = new float3[particle_num];
 
 	float3 gap = box_size - box_margin - box_margin;
 	gap = gap / (particle_dim + 1);
@@ -93,14 +57,29 @@ void SPHSystem::Initialize()
 		{
 			for (int k = 0; k < particle_dim.z; k++)
 			{
-				int index = i * particle_dim.y * particle_dim.z + j * particle_dim.z + k;
-				float3 p = gap * int3{ i + 1, j + 1, k + 1 };
-				pos_host[index] = box_margin + p;
+				int3 ii = make_int3(i, j, k);
+				int index = GetIdx1D(ii, particle_dim);
+				float3 p = gap * (ii + 1);
+				pos_init[index] = box_margin + p;
 			}
 		}
 	}
 
+#ifdef DEBUG
 	for (int i = 0; i < particle_num; i++)
-		std::cout << pos_host[i] << std::endl;
+		std::cout << pos_init[i] << std::endl;
 
+	//std::cout << "float3:  " << sizeof(float3) << std::endl;
+	//std::cout << "*float3:  " << sizeof(float3*) << std::endl;
+	//std::cout << "int3:  " << sizeof(int3) << std::endl;
+	//std::cout << "*int3:  " << sizeof(int3*) << std::endl;
+	//std::cout << "float:  " << sizeof(float) << std::endl;
+	//std::cout << "*float:  " << sizeof(float*) << std::endl;
+	//std::cout << "int:  " << sizeof(int) << std::endl;
+	//std::cout << "*int:  " << sizeof(int*) << std::endl;
+#endif // DEBUG
+
+
+	return pos_init;
 }
+
