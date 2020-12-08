@@ -3,9 +3,7 @@
 // Host Parameters
 
 // Device Parameters
-//static SPHSystem* sys_device;
 
-
-void getNextFrame(float3* particle_pos, float3* particle_color, SPHSystem* sys);
-void InitDeviceSystem(SPHSystem* sys_host);
-void FreeDeviceSystem(SPHSystem* sys_host);
+void getNextFrame(SPHSystem* sys, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource);
+void InitDeviceSystem(SPHSystem* para, float3* pos_init);
+void FreeDeviceSystem(SPHSystem* para);
