@@ -5,6 +5,8 @@
 #include <thrust/execution_policy.h>
 #include <time.h>
 
+#define COPY_TIME 5
+
 // Device 
 int3 block_offset_host[] = {
 	{-1, -1, -1}, {-1, -1, 0}, {-1, -1, 1},
@@ -87,7 +89,7 @@ void InitDeviceSystem(SPHSystem* para, float3* pos_init, float3* velo_init) {
 	checkCudaErrors(cudaMalloc(&sph_device, sizeof(SPHSystem)));
 	checkCudaErrors(cudaMemcpy(sph_device, para, sizeof(SPHSystem), cudaMemcpyHostToDevice));
 
-	checkCudaErrors(cudaMalloc(&particle_bid, 6 * num * sizeof(int)));
+	checkCudaErrors(cudaMalloc(&particle_bid, COPY_TIME * num * sizeof(int)));
 
 	checkCudaErrors(cudaMalloc(&block_pidx, para->block_num * sizeof(int)));
 	checkCudaErrors(cudaMalloc(&block_pnum, para->block_num * sizeof(int)));
@@ -443,7 +445,7 @@ __global__ void AdaptiveStep(	SPHSystem* para,
 								
 	for (int i = 0; i < para->particle_num; i++) {
 		printf("#%d: \n\t delta_density (%f)\n\t delta_pressure (%f, %f, %f)\n\t delta_velocity (%f, %f, %f)\n", i, delta_density[i], delta_pressure[i].x, delta_pressure[i].y, delta_pressure[i].z, delta_velocity[i].x, delta_velocity[i].y, delta_velocity[i].z);
-		printf("     \n\t density (%f)\n\t pressure (%f)\n\t velocity (%f, %f, %f)\n", i, density[i], pressure[i], velocity[i].x, velocity[i].y, velocity[i].z);
+		printf("     \n\t density (%f)\n\t pressure (%f)\n\t velocity (%f, %f, %f)\n", density[i], pressure[i], velocity[i].x, velocity[i].y, velocity[i].z);
 	}
 }
 
@@ -452,25 +454,51 @@ __global__ void ComputeBid(	SPHSystem* para,
 							int* particle_bid,
 							float3* cur_pos) {
 
+	// compute block_id for each particle
+	int num = para->particle_num;
 	int3 blockDim_i = para->block_dim;
-	for (int i = 0; i < para->particle_num; i++) {
+	for (int i = 0; i < num; i++) {
 		int3 tmp_bid = float3TOint3(cur_pos[i] / para->block_size);
 		particle_bid[i] = GetIdx1D(tmp_bid, blockDim_i);
 	}
-}
 
-__global__ void SortParticles()
-{
-	if (threadIdx.x == 1) {
-		thrust::stable_sort_by_key(thrust::device, particle_bid, particle_bid + para->particle_num, cur_pos);
-	}
-	else {
-
+	// copy for sorting
+	for (int i = 0; i < num; i++) {
+		for (int k = 1; k < COPY_TIME; k++) {
+			particle_bid[i + num * k] = particle_bid[i];
+		}
 	}
 }
 
+__global__ void SortParticles(	SPHSystem* para,
+								int* particle_bid,
+								float* density, float* pressure,
+								float3* cur_pos, float3* viscosity, float3* velocity) {
+
+	int num = para->particle_num;
+	if (blockIdx.x == 1) {
+		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 0, particle_bid + num * 1, cur_pos);
+	}
+	else if (blockIdx.x == 2) {
+		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 1, particle_bid + num * 2, density);
+	}
+	else if (blockIdx.x == 3) {
+		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 2, particle_bid + num * 3, pressure);
+	}
+	else if (blockIdx.x == 4) {
+		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 3, particle_bid + num * 4, viscosity);
+	}
+	else if (blockIdx.x == 5) {
+		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 4, particle_bid + num * 5, velocity);
+	}
+	//else if (blockIdx.x == 6) {
+	//	thrust::stable_sort_by_key(thrust::device, particle_bid + num * 5, particle_bid + num * 6, );
+	//}
+
+}
 	
-__global__ void SortParticles() {
+__global__ void ComputeBlockIdxPnum(SPHSystem* para,
+									int* particle_bid, int* block_pidx, int* block_pnum) {
 
 	for (int i = 0; i < para->block_num; i++) {
 		block_pidx[i] = -1;
@@ -499,25 +527,25 @@ __global__ void ExportParticleInfo(	SPHSystem* para,
 	}
 }
 
-void getFirstFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource) {
-
-	dim3 blocks(para->block_dim.x, para->block_dim.y, para->block_dim.z);
-	dim3 threads(256);
-	SortParticles <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum, cur_pos);
-	cudaDeviceSynchronize();
-	float3* pos_info;
-	float3* color_info;
-	checkCudaErrors(cudaGraphicsMapResources(1, &position_resource, 0));
-	checkCudaErrors(cudaGraphicsMapResources(1, &color_resource, 0));
-	size_t pbytes, cbytes;
-	checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&pos_info, &pbytes, position_resource));
-	checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&color_info, &cbytes, color_resource));
-
-	ExportParticleInfo <<<blocks, 1 >>> (sph_device, block_pidx, block_pnum, cur_pos, pos_info, color_info);
-
-	checkCudaErrors(cudaGraphicsUnmapResources(1, &position_resource, 0));
-	checkCudaErrors(cudaGraphicsUnmapResources(1, &color_resource, 0));
-}
+//void getFirstFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource) {
+//
+//	dim3 blocks(para->block_dim.x, para->block_dim.y, para->block_dim.z);
+//	dim3 threads(256);
+//	SortParticles <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum, cur_pos);
+//	cudaDeviceSynchronize();
+//	float3* pos_info;
+//	float3* color_info;
+//	checkCudaErrors(cudaGraphicsMapResources(1, &position_resource, 0));
+//	checkCudaErrors(cudaGraphicsMapResources(1, &color_resource, 0));
+//	size_t pbytes, cbytes;
+//	checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&pos_info, &pbytes, position_resource));
+//	checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&color_info, &cbytes, color_resource));
+//
+//	ExportParticleInfo <<<blocks, 1 >>> (sph_device, block_pidx, block_pnum, cur_pos, pos_info, color_info);
+//
+//	checkCudaErrors(cudaGraphicsUnmapResources(1, &position_resource, 0));
+//	checkCudaErrors(cudaGraphicsUnmapResources(1, &color_resource, 0));
+//}
 
 void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource) {
 	
@@ -526,7 +554,16 @@ void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cuda
 
 	for (int i = 0; i < para->step_each_frame; i++) {
 
-		SortParticles <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum, cur_pos);
+		AdaptiveStep <<<1, 1 >>> (sph_device, delta_density, density, pressure, delta_pressure, delta_viscosity, delta_velocity, velocity);
+		cudaDeviceSynchronize();
+
+		ComputeBid <<<1, 1 >>> (sph_device, particle_bid, cur_pos);
+		cudaDeviceSynchronize();
+
+		SortParticles <<<COPY_TIME, 1 >>> (sph_device, particle_bid, density, pressure, cur_pos, viscosity, velocity);
+		cudaDeviceSynchronize();
+
+		ComputeBlockIdxPnum <<<1, 1 >> > (sph_device, particle_bid, block_pidx, block_pnum);
 		cudaDeviceSynchronize();
 
 		ComputeAll <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, delta_density, density, pressure, block_offset, cur_pos, delta_pressure, delta_viscosity, velocity);
@@ -552,8 +589,6 @@ void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cuda
 
 		Update <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, delta_density, density, pressure, cur_pos, next_pos, velocity);
 		cudaDeviceSynchronize();
-
-		AdaptiveStep <<<1, 1>>> (sph_device, delta_density, density, pressure, delta_pressure, delta_viscosity, delta_velocity, velocity);
 	}
 
 	float3* pos_info;
