@@ -67,6 +67,7 @@ cudaGraphicsResource* cuda_color_resource;
 
 SPHSystem* sph_host;
 float3* pos_init;
+float3* velo_init;
 
 void ConstructFromJsonFile(SPHSystem* sys, const char* filename);
 void ConstructFromJson(SPHSystem* sys, json config);
@@ -109,7 +110,8 @@ void initFluidSystem() {
 #endif // OUTPUT_CONFIG
 
 	pos_init = sph_host->InitializePosition();
-	InitDeviceSystem(sph_host, pos_init);
+	velo_init = sph_host->InitializeVelocity();
+	InitDeviceSystem(sph_host, pos_init, velo_init);
 }
 
 
@@ -218,10 +220,10 @@ void initScene(SPHSystem* sys) {
 void drawParticles() {
 
 	// update color
-	if (frameCnt == 0)
-	{
-		getFirstFrame(sph_host, cuda_position_resource, cuda_color_resource);
-	}
+	//if (frameCnt == 0)
+	//{
+	//	getFirstFrame(sph_host, cuda_position_resource, cuda_color_resource);
+	//}
 	getNextFrame(sph_host, cuda_position_resource, cuda_color_resource);
 
 	glBindBuffer(GL_ARRAY_BUFFER, position_vbo);
@@ -306,6 +308,7 @@ void closeWindow() {
 	FreeDeviceSystem(sph_host);
 	// CPU
 	delete pos_init;
+	delete velo_init;
 
 	// GPU
 	glDeleteBuffers(1, &position_vbo);
@@ -576,6 +579,20 @@ void ConstructFromJson(SPHSystem* sys, json config) {
 		auto tmp = config["time_delta_coefficient"];
 		float x = float(tmp);
 		sys->time_delta = x * sys->h / sys->C0;
+	}
+	{
+		auto tmp = config["velo_init_max"];
+		float x = float(tmp[0]);
+		float y = float(tmp[1]);
+		float z = float(tmp[2]);
+		sys->velo_init_max = make_float3(x, y, z);
+	}
+	{
+		auto tmp = config["velo_init_min"];
+		float x = float(tmp[0]);
+		float y = float(tmp[1]);
+		float z = float(tmp[2]);
+		sys->velo_init_min = make_float3(x, y, z);
 	}
 }
 
