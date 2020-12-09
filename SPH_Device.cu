@@ -6,6 +6,7 @@
 #include <time.h>
 
 #define COPY_TIME 5
+#define ETA 0.9
 
 // Device 
 int3 block_offset_host[] = {
@@ -50,6 +51,30 @@ __device__ float cudaRandomFloat(curandState* state, int pid) {
 	curandState localState = state[pid];
 	curand_init((unsigned int)clock(), pid, 0, &localState);
 	return curand_uniform(&localState);
+}
+
+__HOSTDEV__ float spiky_gradient(int dim, float dist, float cutoff) {
+	float res = 0;
+	float spiky_grad_factor = -45.0 / M_PI;
+	float x, g_factor;
+
+	if (0 < dist && dist < cutoff) {
+		x = (cutoff - dist) / Pow3(cutoff);
+		g_factor = spiky_grad_factor * Pow2(x);
+		res = dist * g_factor / dist;
+	}
+	return res;
+}
+
+__HOSTDEV__ float poly6_kernel(int dim, float dist, float cutoff) {
+	float res = 0;
+	float poly6_factor = 315.0 / 64.0 / M_PI;
+	float x;
+	if (0 < dist && dist < cutoff) {
+		x = (Pow2(cutoff) - Pow2(dist)) / Pow3(cutoff);
+		res = poly6_factor * Pow3(x);
+	}
+	return res;
 }
 
 __HOSTDEV__ float cubic_kernel(int dim, float dist, float cutoff) {
@@ -108,7 +133,7 @@ void InitDeviceSystem(SPHSystem* para, float* dens_init, float3* pos_init, float
 	checkCudaErrors(cudaMemset(next_pos, 0, num * sizeof(float3)));
 
 	checkCudaErrors(cudaMalloc(&density, num * sizeof(float)));
-	checkCudaErrors(cudaMemcpy(density, dens_init, num * sizeof(float3), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(density, dens_init, num * sizeof(float), cudaMemcpyHostToDevice));
 
 	checkCudaErrors(cudaMalloc(&delta_density, num * sizeof(float)));
 
@@ -193,28 +218,26 @@ __global__ void ComputeAll( SPHSystem* _para,
 				float3 vec_ij = _cur_pos[i] - _cur_pos[j];
 				float len_ij = Norm2(vec_ij);
 				len_ij = fmaxf(len_ij, M_EPS);
-				float kernel = cubic_kernel(_para->dim, len_ij, _para->h);
+				float cub_ker = cubic_kernel(_para->dim, len_ij, _para->h);
+				float spi_ker = spiky_gradient(_para->dim, len_ij, _para->h);
+				float pol_ker = poly6_kernel(_para->dim, len_ij, _para->h);
 				// cut off length
-				if (kernel <= 0 + M_EPS) {
-					continue;
-				}
-				if ((len_ij / _para->h) > 2) {
-					continue;
-				}
+				if ((spi_ker >= 0.0 ) && (len_ij / _para->h) <= 2.0 ) {
 
-				// Density
-				_delta_density[i] += _para->mass * kernel * dot((_velocity[i] - _velocity[j]), (vec_ij / len_ij));
+					// Density
+					_delta_density[i] += _para->mass * spi_ker * dot((_velocity[i] - _velocity[j]), (vec_ij / len_ij));
 
-				// Pressure
-				_delta_pressure[i] -= _para->mass * kernel * (vec_ij / len_ij) *
-					(_pressure[i] / Pow2(_density[i] + M_EPS) + _pressure[j] / Pow2(_density[j] + M_EPS));
+					// Pressure
+					_delta_pressure[i] -= _para->mass * spi_ker * (vec_ij / len_ij) *
+						(_pressure[i] / fmaxf(M_EPS, Pow2(_density[i])) + _pressure[j] / fmaxf(M_EPS, Pow2(_density[j])));
 
-				// Viscosity
-				float v_ij = dot(_velocity[i] - _velocity[j], vec_ij);
-				if (v_ij < 0) {
-					float v = -2.0 * _para->alpha * _para->particle_radius * _para->C0 / fmaxf(M_EPS, _density[i] + _density[j]);
-					_delta_viscosity[i] -= _para->mass * kernel * (vec_ij / len_ij) *
-						v_ij * v / (Pow2(len_ij) + 0.01 * Pow2(_para->particle_radius));
+					//// Viscosity
+					//float v_ij = dot(_velocity[i] - _velocity[j], vec_ij);
+					//if (v_ij < 0) {
+					//	float v = -2.0 * _para->alpha * _para->particle_radius * _para->C0 / fmaxf(M_EPS, _density[i] + _density[j]);
+					//	_delta_viscosity[i] -= _para->mass * kernel * (vec_ij / len_ij) *
+					//		v_ij * v / fmaxf(M_EPS, Pow2(len_ij) + 0.01 * Pow2(_para->particle_radius));
+					//}
 				}
 			}
 		}
@@ -387,28 +410,40 @@ __global__ void ConfineToBoundary(	SPHSystem* para, curandState* devStates,
 	float3 bmin = make_float3(para->particle_radius);
 	float3 bmax = para->box_size - para->particle_radius;
 	if (next_pos[i].x <= bmin.x) {
-		next_pos[i].x = bmin.x + M_EPS * cudaRandomFloat(devStates, i);
+		//next_pos[i].x = bmin.x + M_EPS * cudaRandomFloat(devStates, i);
+		next_pos[i].x = min(bmax.x, bmin.x + (bmin.x - next_pos[i].x)* ETA);
+		velocity[i].x = -velocity[i].x * ETA;
 	}
 	else if (next_pos[i].x >= bmax.x) {
-		next_pos[i].x = bmax.x - M_EPS * cudaRandomFloat(devStates, i);
+		//next_pos[i].x = bmax.x - M_EPS * cudaRandomFloat(devStates, i);
+		next_pos[i].x = max(bmin.x, bmax.x - (next_pos[i].x - bmax.x) * ETA);
+		velocity[i].x = -velocity[i].x * ETA;
 	}
 
 	if (next_pos[i].y <= bmin.y){
-		next_pos[i].y = bmin.y + M_EPS * cudaRandomFloat(devStates, i);
+		//next_pos[i].y = bmin.y + M_EPS * cudaRandomFloat(devStates, i);
+		next_pos[i].y = min(bmax.y, bmin.y + (bmin.y - next_pos[i].y) * ETA);
+		velocity[i].y = -velocity[i].y * ETA;
 	}
 	else if (next_pos[i].y >= bmax.y) {
-		next_pos[i].y = bmax.y - M_EPS * cudaRandomFloat(devStates, i);
+		//next_pos[i].y = bmax.y - M_EPS * cudaRandomFloat(devStates, i);
+		next_pos[i].y = max(bmin.y, bmax.y - (next_pos[i].y - bmax.y) * ETA);
+		velocity[i].y = -velocity[i].y * ETA;
 	}
 
 	if (next_pos[i].z <= bmin.z) {
-		next_pos[i].z = bmin.z + M_EPS * cudaRandomFloat(devStates, i);
+		//next_pos[i].z = bmin.z + M_EPS * cudaRandomFloat(devStates, i);
+		next_pos[i].z = min(bmax.z, bmin.z + (bmin.z - next_pos[i].z) * ETA);
+		velocity[i].z = -velocity[i].z * ETA;
 	}
 	else if (next_pos[i].z >= bmax.z) {
-		next_pos[i].z = bmax.z - M_EPS * cudaRandomFloat(devStates, i);
+		//next_pos[i].z = bmax.z - M_EPS * cudaRandomFloat(devStates, i);
+		next_pos[i].z = max(bmin.z, bmax.z - (next_pos[i].z - bmax.z) * ETA);
+		velocity[i].z = -velocity[i].z * ETA;
 	}
 
 	// change velocity
-	velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
+	//velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
 }
 
 
@@ -510,6 +545,8 @@ __global__ void ComputeBlockIdxPnum(SPHSystem* para,
 			block_pidx[particle_bid[i]] = i;
 		}
 		block_pnum[particle_bid[i]]++;
+		if (block_pnum[particle_bid[i]] > 256)
+			printf("Block %d ERROR, exceed threads number", particle_bid[i]);
 	}
 }
 
@@ -554,8 +591,8 @@ void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cuda
 
 	for (int i = 0; i < para->step_each_frame; i++) {
 
-		AdaptiveStep <<<1, 1 >>> (sph_device, delta_density, density, pressure, delta_pressure, delta_viscosity, delta_velocity, velocity);
-		cudaDeviceSynchronize();
+		//AdaptiveStep <<<1, 1 >>> (sph_device, delta_density, density, pressure, delta_pressure, delta_viscosity, delta_velocity, velocity);
+		//cudaDeviceSynchronize();
 
 		ComputeBid <<<1, 1 >>> (sph_device, particle_bid, cur_pos);
 		cudaDeviceSynchronize();
