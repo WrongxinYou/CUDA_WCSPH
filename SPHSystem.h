@@ -46,6 +46,7 @@ public:
 
 	float3* InitializePosition();
 	float3* InitializeVelocity();
+	float* InitializeDensity();
 #ifdef DEBUG
 	void Debug();
 #endif // DEBUG

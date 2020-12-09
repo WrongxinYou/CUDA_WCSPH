@@ -68,6 +68,7 @@ cudaGraphicsResource* cuda_color_resource;
 SPHSystem* sph_host;
 float3* pos_init;
 float3* velo_init;
+float* dens_init;
 
 void ConstructFromJsonFile(SPHSystem* sys, const char* filename);
 void ConstructFromJson(SPHSystem* sys, json config);
@@ -111,7 +112,8 @@ void initFluidSystem() {
 
 	pos_init = sph_host->InitializePosition();
 	velo_init = sph_host->InitializeVelocity();
-	InitDeviceSystem(sph_host, pos_init, velo_init);
+	dens_init = sph_host->InitializeDensity();
+	InitDeviceSystem(sph_host, dens_init, pos_init, velo_init);
 }
 
 
@@ -309,6 +311,7 @@ void closeWindow() {
 	// CPU
 	delete pos_init;
 	delete velo_init;
+	delete dens_init;
 
 	// GPU
 	glDeleteBuffers(1, &position_vbo);
