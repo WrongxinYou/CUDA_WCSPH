@@ -14,7 +14,7 @@
 #include <math.h>
 
 // Constant
-#define M_PI (3.1415926)
+#define M_PI (3.1415926535)
 #define M_EPS (1e-5)
 
 #define checkCudaErrors(val) check_cuda( (val), #val, __FILE__, __LINE__ )
@@ -47,8 +47,6 @@ inline __HOSTDEV__ float3 Pow2(float3 A) { return A * A; }
 inline __HOSTDEV__ float Norm2(float3 A) { return sqrt(A.x * A.x + A.y * A.y + A.z * A.z); }
 inline __HOSTDEV__ int GetIdx1D(int3 bIdx, const int3 bDim) { return bIdx.x * bDim.y * bDim.z + bIdx.y * bDim.z + bIdx.z; }
 inline __HOSTDEV__ bool IdxIsValid(int3 bIdx, const int3 bDim) { return (bIdx >= int3({ 0, 0, 0 }) && bIdx < bDim); }
-
-
 
 
 inline float3 operator * (const float3& A, const int3& B) { return make_float3(A.x * B.x, A.y * B.y, A.z * B.z); }

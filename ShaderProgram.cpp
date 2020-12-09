@@ -2,7 +2,6 @@
 #include <string>
 #include <fstream>
 #include <sstream>
-#include <iostream>
 
 using namespace std;
 
@@ -75,6 +74,10 @@ void ShaderProgram::SetModelViewMatrix(const float* mv) {
 
 void ShaderProgram::SetProjectionMatrix(const float* p) {
 	glUniformMatrix4fv(projectionHandle, 1, GL_FALSE, p);
+}
+
+void ShaderProgram::SetFloat(const std::string& name, float value) {
+	glUniform1f(glGetUniformLocation(programHandle, name.c_str()), value);
 }
 
 void ShaderProgram::CheckCompileErrors(GLuint handle, CheckType type) {
