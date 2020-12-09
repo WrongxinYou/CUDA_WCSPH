@@ -41,8 +41,11 @@ inline __HOSTDEV__ float3 int3TOfloat3(const int3& A) { return make_float3(A.x, 
 
 inline __HOSTDEV__ int Pow2(int A) { return A * A; }
 inline __HOSTDEV__ float Pow2(float A) { return A * A; }
+inline __HOSTDEV__ float Pow2(double A) { return A * A; }
 inline __HOSTDEV__ int3 Pow2(int3 A) { return A * A; }
 inline __HOSTDEV__ float3 Pow2(float3 A) { return A * A; }
+inline __HOSTDEV__ int Pow3(int A) { return A * A * A; }
+inline __HOSTDEV__ float Pow3(float A) { return A * A * A; }
 
 inline __HOSTDEV__ float Norm2(float3 A) { return sqrt(A.x * A.x + A.y * A.y + A.z * A.z); }
 inline __HOSTDEV__ int GetIdx1D(int3 bIdx, const int3 bDim) { return bIdx.x * bDim.y * bDim.z + bIdx.y * bDim.z + bIdx.z; }

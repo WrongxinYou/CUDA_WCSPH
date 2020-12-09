@@ -12,6 +12,7 @@ public:
 	int3 particle_dim; // number of particles in x, y, z axis to intialize
 	int particle_num;
 	float particle_radius;
+	float3 velo_init_min, velo_init_max;
 
 	// Device Parameters
 	float3 block_size;
@@ -44,6 +45,7 @@ public:
 	~SPHSystem();
 
 	float3* InitializePosition();
+	float3* InitializeVelocity();
 #ifdef DEBUG
 	void Debug();
 #endif // DEBUG

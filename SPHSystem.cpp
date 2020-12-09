@@ -2,9 +2,14 @@
 #include "Global.h"
 
 #include <iostream>
-//#include <fstream>
-//#include "json.hpp"
-//using json = nlohmann::json;
+#include <time.h>
+
+float RandomFloat(float a, float b) {
+	float random = ((float)rand()) / (float)RAND_MAX;
+	float diff = b - a;
+	float r = random * diff;
+	return a + r;
+}
 
 SPHSystem::SPHSystem() {
 
@@ -13,6 +18,8 @@ SPHSystem::SPHSystem() {
 	particle_dim = make_int3(3, 3, 3);
 	particle_num = particle_dim.x * particle_dim.y * particle_dim.z;
 	particle_radius = 0.1;
+	velo_init_min = make_float3(0, -1, 0);
+	velo_init_max = make_float3(0.1, -1, 0.1);
 
 	// Device Parameters
 	block_dim = make_int3(3, 3, 3);
@@ -30,7 +37,7 @@ SPHSystem::SPHSystem() {
 	gamma = 7.0;
 	h = 1.3 * particle_radius;
 	gravity = -9.8 * 30;
-	alpha = 0.3;
+	alpha = 0.3; // between 0.08 and 0.5
 	C0 = 200;
 	CFL_v = 0.20;
 	CFL_a = 0.20;
@@ -40,7 +47,7 @@ SPHSystem::SPHSystem() {
 	time_delta = 0.1 * h / C0;
 }
 
-
+//SPHSystem::SPHSystem() {}
 
 SPHSystem::~SPHSystem() {
 
@@ -49,7 +56,6 @@ SPHSystem::~SPHSystem() {
 // Initialize particles position
 float3* SPHSystem::InitializePosition() {
 	float3* pos_init = new float3[particle_num];
-
 	float3 gap = box_size - box_margin - box_margin;
 	gap = gap / (particle_dim + 1);
 
@@ -66,8 +72,19 @@ float3* SPHSystem::InitializePosition() {
 			}
 		}
 	}
-
 	return pos_init;
+}
+
+float3* SPHSystem::InitializeVelocity() {
+	srand(time(0));
+	float3* velo_init = new float3[particle_num];
+	for (int i = 0; i < particle_num; i++) {
+		velo_init[i] = M_EPS + make_float3(
+			RandomFloat(velo_init_min.x, velo_init_max.x),
+			RandomFloat(velo_init_min.y, velo_init_max.y),
+			RandomFloat(velo_init_min.z, velo_init_max.z));
+	}
+	return velo_init;
 }
 
 #ifdef DEBUG
