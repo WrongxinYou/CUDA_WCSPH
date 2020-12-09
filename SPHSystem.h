@@ -1,5 +1,7 @@
 #pragma once
 #include "Global.h"
+//#include "json.hpp"
+//using json = nlohmann::json;
 
 class SPHSystem
 {
@@ -41,5 +43,7 @@ public:
 	~SPHSystem();
 
 	float3* InitializePosition();
+#ifdef DEBUG
+	void Debug();
+#endif // DEBUG
 };
-

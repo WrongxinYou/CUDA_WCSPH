@@ -1,4 +1,5 @@
 #pragma once
+#include <iostream>
 #include <GL/glew.h>
 #include <GL/freeglut.h>
 
@@ -23,6 +24,7 @@ public:
 	void Init(const char* vertexShaderPath, const char* fragShaderPath);
 	void SetModelViewMatrix(const float* mv);
 	void SetProjectionMatrix(const float* p);
+	void SetFloat(const std::string& name, float value);
 	void Bind();
 	GLuint GetProgrameHandle();
 

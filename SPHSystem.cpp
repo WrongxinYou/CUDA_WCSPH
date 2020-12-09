@@ -2,9 +2,11 @@
 #include "Global.h"
 
 #include <iostream>
+//#include <fstream>
+//#include "json.hpp"
+//using json = nlohmann::json;
 
-SPHSystem::SPHSystem()
-{
+SPHSystem::SPHSystem() {
 
 	// SPH Parameters
 	dim = 3;
@@ -37,15 +39,14 @@ SPHSystem::SPHSystem()
 	time_delta = 0.1 * h / C0;
 }
 
-SPHSystem::~SPHSystem()
-{
+
+
+SPHSystem::~SPHSystem() {
 
 }
 
-
 // Initialize particles position
-float3* SPHSystem::InitializePosition()
-{
+float3* SPHSystem::InitializePosition() {
 	float3* pos_init = new float3[particle_num];
 
 	float3 gap = box_size - box_margin - box_margin;
@@ -65,7 +66,12 @@ float3* SPHSystem::InitializePosition()
 		}
 	}
 
+	return pos_init;
+}
+
 #ifdef DEBUG
+void SPHSystem::Debug()
+{
 	for (int i = 0; i < particle_num; i++)
 		std::cout << pos_init[i] << std::endl;
 
@@ -77,9 +83,6 @@ float3* SPHSystem::InitializePosition()
 	//std::cout << "*float:  " << sizeof(float*) << std::endl;
 	//std::cout << "int:  " << sizeof(int) << std::endl;
 	//std::cout << "*int:  " << sizeof(int*) << std::endl;
-#endif // DEBUG
-
-
-	return pos_init;
 }
+#endif // DEBUG
 

@@ -6,8 +6,12 @@
 
 #include <cuda_gl_interop.h>
 #include <cuda_runtime.h>
+#include <fstream>
+#include "json.hpp"
 
-using namespace std;
+#define OUTPUT_FRAME_NUM
+
+using json = nlohmann::json;
 
 typedef enum { ROTATE, TRANSLATE, SCALE } CONTROL_STATE;
 
@@ -16,6 +20,7 @@ typedef enum { ROTATE, TRANSLATE, SCALE } CONTROL_STATE;
 // Dispaly Settings
 ///////////////////////////////////////////////////////////////////////////////
 int res[2] = { 512,512 };
+int fov = 45;
 CONTROL_STATE controlState = TRANSLATE;
 int mousePos[2];
 bool leftMouseButton = false;
@@ -63,8 +68,91 @@ cudaGraphicsResource* cuda_color_resource;
 SPHSystem* sph_host;
 float3* pos_init;
 
+void ConstructFromJson(SPHSystem* sys, json config) {
+	// SPH Parameters
+	sys->dim = config["dim"];
+	{
+		auto tmp = config["particle_dim"];
+		sys->particle_dim = make_int3(tmp[0], tmp[1], tmp[2]);
+		sys->particle_num = sys->particle_dim.x * sys->particle_dim.y * sys->particle_dim.z;
+	}
+	sys->particle_radius = config["particle_radius"];
+
+	// Device Parameters
+	{
+		auto tmp = config["block_dim"];
+		sys->block_dim = make_int3(tmp[0], tmp[1], tmp[2]);
+		sys->block_num = sys->block_dim.x * sys->block_dim.y * sys->block_dim.z;
+		sys->block_size = sys->box_size / sys->block_dim; 
+	}
+
+	// Draw Parameters
+	sys->step_each_frame = config["step_each_frame"];
+	{
+		auto tmp = config["box_size"];
+		sys->box_size = make_float3(tmp[0], tmp[1], tmp[2]);
+		sys->box_margin = sys->box_size * float(config["box_margin_coefficient"]); 
+	}
+
+	// Function Parameters
+	sys->rho0 = config["rho0"];  // reference density
+	sys->gamma = config["gamma"];
+	sys->h = sys->particle_radius * float(config["h_coefficient"]);
+	sys->gravity = float(config["gravity"]) * float(config["gravity_coefficient"]);
+	sys->alpha = config["alpha"];
+	sys->C0 = config["C0"];
+	sys->CFL_v = config["CFL_v"];
+	sys->CFL_a = config["CFL_a"];
+	sys->poly6_factor = float(config["poly6_factor_coefficient1"]) / float(config["poly6_factor_coefficient2"]) / M_PI;
+	sys->spiky_grad_factor = config["spiky_grad_factor_coefficient"] / M_PI;
+	sys->mass = pow(sys->particle_radius, sys->dim) * sys->rho0;
+	sys->time_delta = config["time_delta_coefficient"] * sys->h / sys->C0;
+}
+
+void ConstructFromJsonFile(SPHSystem* sys, const char* filename) {
+	std::ifstream fin(filename);
+	json config;
+	fin >> config;
+	fin.close();
+	ConstructFromJson(sys, config);
+}
+
 void initFluidSystem() {
+
 	sph_host = new SPHSystem();
+	//ConstructFromJsonFile(sph_host, "SPH_config.json");
+
+#ifdef OUTPUT_CONFIG
+	std::ofstream fout("tmp.json");
+	json config;
+	config = {
+		{"C0", 200},
+		{"CFL_a", 0.2},
+		{"CFL_v", 0.2},
+		{"alpha", 0.3},
+		{"block_dim", {3, 3, 3}},
+		{"box_margin_coefficient", 0.1},
+		{"box_size", {1.0, 1.0, 1.0}},
+		{"dim", 3},
+		{"gamma", 7.0},
+		{"gravity", -9.8},
+		{"gravity_coefficient", 30},
+		{"h_coefficient", 1.3},
+		{"particle_dim", {3, 3, 3}},
+		{"particle_radius", 0.1},
+		{"poly6_factor_coefficient1", 315.0},
+		{"poly6_factor_coefficient2", 64.0},
+		{"rho0", 1000},
+		{"spiky_grad_factor_coefficient", -45.0},
+		{"step_each_frame", 5},
+		{"time_delta_coefficient", 0.1}
+	};
+	fout << config << std::endl;
+	fout.close();
+	std::cout << config << std::endl;
+	ConstructFromJson(sph_host, config);
+#endif // OUTPUT_CONFIG
+
 	pos_init = sph_host->InitializePosition();
 	InitDeviceSystem(sph_host, pos_init);
 }
@@ -72,20 +160,20 @@ void initFluidSystem() {
 
 int main(int argc, char* argv[]) {
 
-	cout << "Initializing GLUT..." << endl;
+	std::cout << "Initializing GLUT..." << std::endl;
 	glutInit(&argc, argv);
 
 
-	cout << "Initializing OpenGL..." << endl;
+	std::cout << "Initializing OpenGL..." << std::endl;
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH | GLUT_STENCIL);
 
 	glutInitWindowSize(res[0], res[1]);
 	glutInitWindowPosition(0, 0);
 	glutCreateWindow("CUDA SPH");
 
-	cout << "OpenGL Version: " << glGetString(GL_VERSION) << endl;
-	cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << endl;
-	cout << "Shading Language Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << endl;
+	std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
+	std::cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl;
+	std::cout << "Shading Language Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
 
 	glutDisplayFunc(displayFunc); // tells glut to use a particular display function to redraw 
 	glutIdleFunc(idleFunc); // perform animation inside idleFunc
@@ -98,7 +186,7 @@ int main(int argc, char* argv[]) {
 	GLint result = glewInit();
 	if (result != GLEW_OK)
 	{
-		cout << "error: " << glewGetErrorString(result) << endl;
+		std::cout << "error: " << glewGetErrorString(result) << std::endl;
 		exit(EXIT_FAILURE);
 	}
 
@@ -184,7 +272,7 @@ void drawParticles() {
 	glColorPointer(3, GL_FLOAT, 0, nullptr);
 	glEnableClientState(GL_COLOR_ARRAY);
 
-	glPointSize(5.0f);
+	glEnable(GL_POINT_SMOOTH);
 	glDrawArrays(GL_POINTS, 0, sph_host->particle_num);
 
 	glDisableClientState(GL_VERTEX_ARRAY);
@@ -205,6 +293,12 @@ void displayFunc() {
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+	float p[16];
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	gluPerspective(fov, 1.0, 0.01, 100.0);
+	glGetFloatv(GL_PROJECTION_MATRIX, p);
+
 	float m[16];
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
@@ -213,12 +307,9 @@ void displayFunc() {
 	glRotatef(landRotate[1], 0.0, 1.0, 0.0);
 	glRotatef(landRotate[2], 0.0, 0.0, 1.0);
 	glScalef(landScale[0], landScale[1], landScale[2]);
-	gluLookAt(box_size / 2.0f, box_size / 2.0f, box_size / 2.0f, box_size * 1.4, box_size, box_size, 0, 1, 0);
+	gluLookAt(1.6, 0.8, 2.3, 0.5, 0.5, 0.5, 0, 1, 0);
 	glGetFloatv(GL_MODELVIEW_MATRIX, m);
 
-	float p[16];
-	glMatrixMode(GL_PROJECTION);
-	glGetFloatv(GL_PROJECTION_MATRIX, p);
 
 	// draw box
 	boxProgram.Bind();
@@ -238,6 +329,7 @@ void displayFunc() {
 
 	particleProgram.SetModelViewMatrix(m);
 	particleProgram.SetProjectionMatrix(p);
+	particleProgram.SetFloat("pointScale", res[1] / tanf(fov * 0.5f * float(M_PI) / 180.0f));
 	drawParticles();
 
 	glDisable(GL_POINT_SPRITE_ARB);
@@ -388,7 +480,7 @@ void keyboardFunc(unsigned char key, int x, int y) {
 		break;
 
 	case ' ':
-		cout << "You pressed the spacebar." << endl;
+		std::cout << "You pressed the spacebar." << std::endl;
 		break;
 
 	case 'x':
