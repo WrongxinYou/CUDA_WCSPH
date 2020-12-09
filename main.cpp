@@ -77,6 +77,10 @@ void initFluidSystem() {
 
 	sph_host = new SPHSystem();
 	ConstructFromJsonFile(sph_host, "SPH_config.json");
+	int dim_max = ceil(3 / (4 * sph_host->h));
+	if (!(sph_host->block_dim <= make_int3(dim_max))) {
+		printf("WARNING: block_dimension is too large, please decrease it\n");
+	}
 
 #ifdef OUTPUT_CONFIG
 	std::ofstream fout("tmp.json");
@@ -294,6 +298,7 @@ void displayFunc() {
 	particleProgram.SetModelViewMatrix(m);
 	particleProgram.SetProjectionMatrix(p);
 	particleProgram.SetFloat("pointScale", res[1] / tanf(fov * 0.5f * float(M_PI) / 180.0f));
+	particleProgram.SetFloat("pointRadius", sph_host->particle_radius);
 	drawParticles();
 
 	glDisable(GL_POINT_SPRITE_ARB);
@@ -466,6 +471,14 @@ void keyboardFunc(unsigned char key, int x, int y) {
 	}
 }
 
+void ConstructFromJsonFile(SPHSystem* sys, const char* filename) {
+	std::ifstream fin(filename);
+	json config;
+	fin >> config;
+	fin.close();
+	ConstructFromJson(sys, config);
+}
+
 void ConstructFromJson(SPHSystem* sys, json config) {
 	// SPH Parameters
 	{
@@ -602,12 +615,4 @@ void ConstructFromJson(SPHSystem* sys, json config) {
 		float x = float(tmp);
 		sys->eta = x;
 	}
-}
-
-void ConstructFromJsonFile(SPHSystem* sys, const char* filename) {
-	std::ifstream fin(filename);
-	json config;
-	fin >> config;
-	fin.close();
-	ConstructFromJson(sys, config);
 }
