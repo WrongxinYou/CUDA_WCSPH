@@ -423,11 +423,30 @@ __global__ void ExportParticleInfo(	SPHSystem* para,
 	}
 }
 
+void getFirstFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource) {
+
+	dim3 blocks(para->block_dim.x, para->block_dim.y, para->block_dim.z);
+	dim3 threads(256);
+	SortParticles <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum, cur_pos);
+	cudaDeviceSynchronize();
+	float3* pos_info;
+	float3* color_info;
+	checkCudaErrors(cudaGraphicsMapResources(1, &position_resource, 0));
+	checkCudaErrors(cudaGraphicsMapResources(1, &color_resource, 0));
+	size_t pbytes, cbytes;
+	checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&pos_info, &pbytes, position_resource));
+	checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&color_info, &cbytes, color_resource));
+
+	ExportParticleInfo <<<blocks, 1 >>> (sph_device, block_pidx, block_pnum, cur_pos, pos_info, color_info);
+
+	checkCudaErrors(cudaGraphicsUnmapResources(1, &position_resource, 0));
+	checkCudaErrors(cudaGraphicsUnmapResources(1, &color_resource, 0));
+}
 
 void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource) {
 	
 	dim3 blocks(para->block_dim.x, para->block_dim.y, para->block_dim.z);
-	dim3 threads(256);
+	dim3 threads(para->block_thread_num);
 
 	for (int i = 0; i < para->step_each_frame; i++) {
 

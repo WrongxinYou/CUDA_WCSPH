@@ -4,6 +4,7 @@
 
 // Device Parameters
 
+void getFirstFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource);
 void getNextFrame(SPHSystem* sys, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource);
 void InitDeviceSystem(SPHSystem* para, float3* pos_init);
 void FreeDeviceSystem(SPHSystem* para);

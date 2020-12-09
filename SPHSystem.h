@@ -17,6 +17,7 @@ public:
 	float3 block_size;
 	int3 block_dim;
 	int block_num;
+	int block_thread_num;
 
 	// Draw Parameters
 	int step_each_frame;

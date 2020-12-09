@@ -68,59 +68,13 @@ cudaGraphicsResource* cuda_color_resource;
 SPHSystem* sph_host;
 float3* pos_init;
 
-void ConstructFromJson(SPHSystem* sys, json config) {
-	// SPH Parameters
-	sys->dim = config["dim"];
-	{
-		auto tmp = config["particle_dim"];
-		sys->particle_dim = make_int3(tmp[0], tmp[1], tmp[2]);
-		sys->particle_num = sys->particle_dim.x * sys->particle_dim.y * sys->particle_dim.z;
-	}
-	sys->particle_radius = config["particle_radius"];
-
-	// Device Parameters
-	{
-		auto tmp = config["block_dim"];
-		sys->block_dim = make_int3(tmp[0], tmp[1], tmp[2]);
-		sys->block_num = sys->block_dim.x * sys->block_dim.y * sys->block_dim.z;
-		sys->block_size = sys->box_size / sys->block_dim; 
-	}
-
-	// Draw Parameters
-	sys->step_each_frame = config["step_each_frame"];
-	{
-		auto tmp = config["box_size"];
-		sys->box_size = make_float3(tmp[0], tmp[1], tmp[2]);
-		sys->box_margin = sys->box_size * float(config["box_margin_coefficient"]); 
-	}
-
-	// Function Parameters
-	sys->rho0 = config["rho0"];  // reference density
-	sys->gamma = config["gamma"];
-	sys->h = sys->particle_radius * float(config["h_coefficient"]);
-	sys->gravity = float(config["gravity"]) * float(config["gravity_coefficient"]);
-	sys->alpha = config["alpha"];
-	sys->C0 = config["C0"];
-	sys->CFL_v = config["CFL_v"];
-	sys->CFL_a = config["CFL_a"];
-	sys->poly6_factor = float(config["poly6_factor_coefficient1"]) / float(config["poly6_factor_coefficient2"]) / M_PI;
-	sys->spiky_grad_factor = config["spiky_grad_factor_coefficient"] / M_PI;
-	sys->mass = pow(sys->particle_radius, sys->dim) * sys->rho0;
-	sys->time_delta = config["time_delta_coefficient"] * sys->h / sys->C0;
-}
-
-void ConstructFromJsonFile(SPHSystem* sys, const char* filename) {
-	std::ifstream fin(filename);
-	json config;
-	fin >> config;
-	fin.close();
-	ConstructFromJson(sys, config);
-}
+void ConstructFromJsonFile(SPHSystem* sys, const char* filename);
+void ConstructFromJson(SPHSystem* sys, json config);
 
 void initFluidSystem() {
 
 	sph_host = new SPHSystem();
-	//ConstructFromJsonFile(sph_host, "SPH_config.json");
+	ConstructFromJsonFile(sph_host, "SPH_config.json");
 
 #ifdef OUTPUT_CONFIG
 	std::ofstream fout("tmp.json");
@@ -131,6 +85,7 @@ void initFluidSystem() {
 		{"CFL_v", 0.2},
 		{"alpha", 0.3},
 		{"block_dim", {3, 3, 3}},
+		{"block_thread_num", 256};
 		{"box_margin_coefficient", 0.1},
 		{"box_size", {1.0, 1.0, 1.0}},
 		{"dim", 3},
@@ -257,11 +212,16 @@ void initScene(SPHSystem* sys) {
 	checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_color_resource, color_vbo, cudaGraphicsMapFlagsNone));
 
 	particleProgram.Init("shader/particle.vs", "shader/particle.fs");
+
 }
 
 void drawParticles() {
 
 	// update color
+	if (frameCnt == 0)
+	{
+		getFirstFrame(sph_host, cuda_position_resource, cuda_color_resource);
+	}
 	getNextFrame(sph_host, cuda_position_resource, cuda_color_resource);
 
 	glBindBuffer(GL_ARRAY_BUFFER, position_vbo);
@@ -498,4 +458,131 @@ void keyboardFunc(unsigned char key, int x, int y) {
 		interrupt = false;
 		break;
 	}
+}
+
+void ConstructFromJson(SPHSystem* sys, json config) {
+	// SPH Parameters
+	{
+		auto tmp = config["dim"];
+		int x = int(tmp);
+		sys->dim = x;
+	}
+	{
+		auto tmp = config["particle_dim"];
+		int x = int(tmp[0]);
+		int y = int(tmp[1]);
+		int z = int(tmp[2]);
+		sys->particle_dim = make_int3(x, y, z);
+	}
+	sys->particle_num = sys->particle_dim.x * sys->particle_dim.y * sys->particle_dim.z;
+	{
+		auto tmp = config["particle_radius"];
+		float x = float(tmp);
+		sys->particle_radius = x;
+	}
+
+	// Device Parameters
+	{
+		auto tmp = config["block_dim"];
+		int x = int(tmp[0]);
+		int y = int(tmp[1]);
+		int z = int(tmp[2]);
+		sys->block_dim = make_int3(x, y, z);
+	}
+	sys->block_num = sys->block_dim.x * sys->block_dim.y * sys->block_dim.z;
+	sys->block_size = sys->box_size / sys->block_dim;
+	{
+		auto tmp = config["block_thread_num"];
+		int x = int(tmp);
+		sys->block_thread_num = x;
+	}
+
+	// Draw Parameters
+	{
+		auto tmp = config["step_each_frame"];
+		int x = int(tmp);
+		sys->step_each_frame = x;
+	}
+	{
+		auto tmp = config["box_size"];
+		float x = float(tmp[0]);
+		float y = float(tmp[1]);
+		float z = float(tmp[2]);
+		sys->box_size = make_float3(x, y, z);
+	}
+	{
+		auto tmp = config["box_margin_coefficient"];
+		float x = float(tmp);
+		sys->box_margin = sys->box_size * x;
+	}
+
+	// Function Parameters
+	{
+		auto tmp = config["rho0"];
+		float x = float(tmp);
+		sys->rho0 = x;  // reference density
+	}
+	{
+		auto tmp = config["gamma"];
+		float x = float(tmp);
+		sys->gamma = x;
+	}
+	{
+		auto tmp = config["h_coefficient"];
+		float x = float(tmp);
+		sys->h = sys->particle_radius * x;
+	}
+	{
+		auto tmp = config["gravity"];
+		auto tmp1 = config["gravity_coefficient"];
+		float x = float(tmp);
+		float y = float(tmp1);
+		sys->gravity = x * y;
+	}
+	{
+		auto tmp = config["alpha"];
+		float x = float(tmp);
+		sys->alpha = x;
+	}
+	{
+		auto tmp = config["C0"];
+		float x = float(tmp);
+		sys->C0 = x;
+	}
+	{
+		auto tmp = config["CFL_v"];
+		float x = float(tmp);
+		sys->CFL_v = x;
+	}
+	{
+		auto tmp = config["CFL_a"];
+		float x = float(tmp);
+		sys->CFL_a = x;
+	}
+	{
+		auto tmp = config["poly6_factor_coefficient1"];
+		auto tmp1 = config["poly6_factor_coefficient2"];
+		float x = float(tmp);
+		float y = float(tmp1);
+		sys->poly6_factor = x / y / M_PI;
+	}
+	{
+		auto tmp = config["spiky_grad_factor_coefficient"];
+		float x = float(tmp);
+		sys->spiky_grad_factor = x / M_PI;
+	}
+	sys->mass = pow(sys->particle_radius, sys->dim) * sys->rho0;
+	{
+		auto tmp = config["time_delta_coefficient"];
+		float x = float(tmp);
+		sys->time_delta = x * sys->h / sys->C0;
+	}
+}
+
+void ConstructFromJsonFile(SPHSystem* sys, const char* filename) {
+	std::ifstream fin(filename);
+	json config;
+	fin >> config;
+	fin.close();
+	ConstructFromJson(sys, config);
 }
