@@ -83,7 +83,7 @@ __HOSTDEV__ float p_update(float rho, float rho0, float C0, float gamma) {
 	return b * (pow(rho / rho0, gamma) - 1.0);
 }
 
-void InitDeviceSystem(SPHSystem* para, float3* pos_init, float3* velo_init) {
+void InitDeviceSystem(SPHSystem* para, float* dens_init, float3* pos_init, float3* velo_init) {
 
 	int num = para->particle_num;
 	checkCudaErrors(cudaMalloc(&sph_device, sizeof(SPHSystem)));
@@ -108,7 +108,7 @@ void InitDeviceSystem(SPHSystem* para, float3* pos_init, float3* velo_init) {
 	checkCudaErrors(cudaMemset(next_pos, 0, num * sizeof(float3)));
 
 	checkCudaErrors(cudaMalloc(&density, num * sizeof(float)));
-	checkCudaErrors(cudaMemset(density, 0, num * sizeof(float)));
+	checkCudaErrors(cudaMemcpy(density, dens_init, num * sizeof(float3), cudaMemcpyHostToDevice));
 
 	checkCudaErrors(cudaMalloc(&delta_density, num * sizeof(float)));
 
@@ -563,7 +563,7 @@ void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cuda
 		SortParticles <<<COPY_TIME, 1 >>> (sph_device, particle_bid, density, pressure, cur_pos, viscosity, velocity);
 		cudaDeviceSynchronize();
 
-		ComputeBlockIdxPnum <<<1, 1 >> > (sph_device, particle_bid, block_pidx, block_pnum);
+		ComputeBlockIdxPnum <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum);
 		cudaDeviceSynchronize();
 
 		ComputeAll <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, delta_density, density, pressure, block_offset, cur_pos, delta_pressure, delta_viscosity, velocity);

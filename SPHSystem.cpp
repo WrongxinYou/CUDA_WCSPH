@@ -87,6 +87,14 @@ float3* SPHSystem::InitializeVelocity() {
 	return velo_init;
 }
 
+float* SPHSystem::InitializeDensity() {
+	float* dens_init = new float[particle_num];
+	for (int i = 0; i < particle_num; i++) {
+		dens_init[i] = rho0;
+	}
+	return dens_init;
+}
+
 #ifdef DEBUG
 void SPHSystem::Debug()
 {
