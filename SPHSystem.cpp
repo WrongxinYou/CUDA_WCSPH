@@ -18,6 +18,7 @@ SPHSystem::SPHSystem() {
 	block_dim = make_int3(3, 3, 3);
 	block_num = block_dim.x * block_dim.y * block_dim.z;
 	block_size = box_size / block_dim;
+	block_thread_num = 256;
 
 	// Draw Parameters
 	step_each_frame = 5;

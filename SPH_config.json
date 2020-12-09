@@ -4,6 +4,7 @@
   "CFL_v": 0.2,
   "alpha": 0.3,
   "block_dim": [ 3, 3, 3 ],
+  "block_thread_num": 256,
   "box_margin_coefficient": 0.1,
   "box_size": [ 1.0, 1.0, 1.0 ],
   "dim": 3,
@@ -17,6 +18,6 @@
   "poly6_factor_coefficient2": 64.0,
   "rho0": 1000,
   "spiky_grad_factor_coefficient": -45.0,
-  "step_each_frame": 5,
+  "step_each_frame": 1,
   "time_delta_coefficient": 0.1
 }
