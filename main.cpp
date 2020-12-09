@@ -597,6 +597,11 @@ void ConstructFromJson(SPHSystem* sys, json config) {
 		float z = float(tmp[2]);
 		sys->velo_init_min = make_float3(x, y, z);
 	}
+	{
+		auto tmp = config["eta"];
+		float x = float(tmp);
+		sys->eta = x;
+	}
 }
 
 void ConstructFromJsonFile(SPHSystem* sys, const char* filename) {

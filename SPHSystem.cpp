@@ -24,12 +24,12 @@ SPHSystem::SPHSystem() {
 	// Device Parameters
 	block_dim = make_int3(3, 3, 3);
 	block_num = block_dim.x * block_dim.y * block_dim.z;
-	block_size = box_size / block_dim;
+	block_size = box_size / block_dim; //  block_dim <= 3/(4 cutoff) <= 3/(4 * 1.3 radius)
 	block_thread_num = 256;
 
 	// Draw Parameters
 	step_each_frame = 5;
-	box_size = make_float3(1.0, 1.0, 1.0);
+	box_size = make_float3(1.0, 1.0, 1.0); 
 	box_margin = box_size * 0.1;
 
 	// Function Parameters
@@ -45,6 +45,7 @@ SPHSystem::SPHSystem() {
 	spiky_grad_factor = -45.0 / M_PI;
 	mass = pow(particle_radius, dim) * rho0;
 	time_delta = 0.1 * h / C0;
+	eta = 0.8; // confine boundary loss coefficient
 }
 
 //SPHSystem::SPHSystem() {}

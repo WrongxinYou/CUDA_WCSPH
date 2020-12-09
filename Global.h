@@ -49,7 +49,7 @@ inline __HOSTDEV__ float Pow3(float A) { return A * A * A; }
 
 inline __HOSTDEV__ float Norm2(float3 A) { return sqrt(A.x * A.x + A.y * A.y + A.z * A.z); }
 inline __HOSTDEV__ int GetIdx1D(int3 bIdx, const int3 bDim) { return bIdx.x * bDim.y * bDim.z + bIdx.y * bDim.z + bIdx.z; }
-inline __HOSTDEV__ bool IdxIsValid(int3 bIdx, const int3 bDim) { return (bIdx >= int3({ 0, 0, 0 }) && bIdx < bDim); }
+inline __HOSTDEV__ bool IdxIsValid(int3 bIdx, const int3 bDim) { return (bIdx >= make_int3(0, 0, 0) && bIdx < bDim); }
 
 
 inline float3 operator * (const float3& A, const int3& B) { return make_float3(A.x * B.x, A.y * B.y, A.z * B.z); }

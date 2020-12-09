@@ -2,7 +2,7 @@
 
 in vec3 pos;
 
-float pointRadius = 0.01f;
+float pointRadius = 0.015f;
 
 varying vec3 fs_PosEye;
 varying mat4 u_Persp;
