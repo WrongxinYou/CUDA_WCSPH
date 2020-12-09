@@ -282,7 +282,7 @@ __global__ void ComputePressure(SPHSystem* para,
 				float len_ij = Norm2(vec_ij);
 				len_ij = fmaxf(len_ij, M_EPS);
 				delta_pressure[i] -= para->mass * cubic_kernel(para->dim, len_ij, para->h) * (vec_ij / len_ij) *
-					(_pressure[i] / Pow2(_density[i]) + _pressure[j] / Pow2(_density[j]));
+					(_pressure[i] / Pow2(_density[i] + M_EPS) + _pressure[j] / Pow2(_density[j] + M_EPS));
 			}
 		}
 	}
