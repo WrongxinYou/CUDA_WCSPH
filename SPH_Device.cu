@@ -6,7 +6,6 @@
 #include <time.h>
 
 #define COPY_TIME 5
-#define ETA 0.9
 
 // Device 
 int3 block_offset_host[] = {
@@ -55,13 +54,11 @@ __device__ float cudaRandomFloat(curandState* state, int pid) {
 
 __HOSTDEV__ float spiky_gradient(int dim, float dist, float cutoff) {
 	float res = 0;
-	float spiky_grad_factor = -45.0 / M_PI;
-	float x, g_factor;
-
+	float spiky_grad_factor = 45.0 / M_PI;
+	float x;
 	if (0 < dist && dist < cutoff) {
-		x = (cutoff - dist) / Pow3(cutoff);
-		g_factor = spiky_grad_factor * Pow2(x);
-		res = dist * g_factor / dist;
+		x = 1.0 - Pow2(dist / cutoff);
+		res = spiky_grad_factor * x / Pow2(cutoff) / Pow2(cutoff);
 	}
 	return res;
 }
@@ -71,8 +68,8 @@ __HOSTDEV__ float poly6_kernel(int dim, float dist, float cutoff) {
 	float poly6_factor = 315.0 / 64.0 / M_PI;
 	float x;
 	if (0 < dist && dist < cutoff) {
-		x = (Pow2(cutoff) - Pow2(dist)) / Pow3(cutoff);
-		res = poly6_factor * Pow3(x);
+		x = 1.0 - Pow2(dist) / Pow2(cutoff);
+		res = poly6_factor / Pow3(cutoff) * Pow3(x);
 	}
 	return res;
 }
@@ -93,11 +90,32 @@ __HOSTDEV__ float cubic_kernel(int dim, float dist, float cutoff) {
 	float q = dist / cutoff;
 	if (q <= 1.0 + M_EPS) {
 		res = k * (1.0 - 3.0 / 2.0 * Pow2(q) * (1.0 - q / 2.0));
-		//res = (k / cutoff) * (-3 * q + 2.25 * Pow2(q));
 	}
 	else if (q <= 2.0 + M_EPS) {
 		res = k / 4.0 * Pow3(2.0f - q);
-		//res = -0.75 * (k / cutoff) * Pow2(2 - q);
+	}
+	return res;
+}
+
+__HOSTDEV__ float cubic_kernel_derivative(int dim, float dist, float cutoff) {
+	// B - cubic spline smoothing kernel
+	float res = 0;
+	float k;
+	if (dim == 1) {
+		k = 2.0 / (3.0 * pow(cutoff, dim) * M_PI);
+	}
+	else if (dim == 2) {
+		k = 10.0 / (7.0 * pow(cutoff, dim) * M_PI);
+	}
+	else { // dim == 3
+		k = 1.0 / (1.0 * pow(cutoff, dim) * M_PI);
+	}
+	float q = dist / cutoff;
+	if (q <= 1.0 + M_EPS) {
+		res = (k / cutoff) * (-3 * q + 2.25 * Pow2(q));
+	}
+	else if (q <= 2.0 + M_EPS) {
+		res = -0.75 * (k / cutoff) * Pow2(2 - q);
 	}
 	return res;
 }
@@ -188,7 +206,7 @@ void FreeDeviceSystem(SPHSystem* para) {
 	checkCudaErrors(cudaFree(delta_velocity));
 }
 
-__global__ void ComputeAll( SPHSystem* _para,
+__global__ void ComputeDelta( SPHSystem* _para,
 							int* _block_pidx, int* _block_pnum,
 							float* _delta_density, float* _density,  float* _pressure,
 							int3* _block_offset,
@@ -218,143 +236,32 @@ __global__ void ComputeAll( SPHSystem* _para,
 				float3 vec_ij = _cur_pos[i] - _cur_pos[j];
 				float len_ij = Norm2(vec_ij);
 				len_ij = fmaxf(len_ij, M_EPS);
-				float cub_ker = cubic_kernel(_para->dim, len_ij, _para->h);
-				float spi_ker = spiky_gradient(_para->dim, len_ij, _para->h);
 				float pol_ker = poly6_kernel(_para->dim, len_ij, _para->h);
+				float spi_ker = spiky_gradient(_para->dim, len_ij, _para->h);
+				float cub_ker = cubic_kernel(_para->dim, len_ij, _para->h);
+				float cub_ker_deri = cubic_kernel_derivative(_para->dim, len_ij, _para->h);
 				// cut off length
 				if ((spi_ker >= 0.0 ) && (len_ij / _para->h) <= 2.0 ) {
 
 					// Density
-					_delta_density[i] += _para->mass * spi_ker * dot((_velocity[i] - _velocity[j]), (vec_ij / len_ij));
+					_delta_density[i] += _para->mass * cub_ker_deri * dot((_velocity[i] - _velocity[j]), (vec_ij / len_ij));
 
 					// Pressure
-					_delta_pressure[i] -= _para->mass * spi_ker * (vec_ij / len_ij) *
+					_delta_pressure[i] -= _para->mass * cub_ker_deri * (vec_ij / len_ij) *
 						(_pressure[i] / fmaxf(M_EPS, Pow2(_density[i])) + _pressure[j] / fmaxf(M_EPS, Pow2(_density[j])));
 
-					//// Viscosity
-					//float v_ij = dot(_velocity[i] - _velocity[j], vec_ij);
-					//if (v_ij < 0) {
-					//	float v = -2.0 * _para->alpha * _para->particle_radius * _para->C0 / fmaxf(M_EPS, _density[i] + _density[j]);
-					//	_delta_viscosity[i] -= _para->mass * kernel * (vec_ij / len_ij) *
-					//		v_ij * v / fmaxf(M_EPS, Pow2(len_ij) + 0.01 * Pow2(_para->particle_radius));
-					//}
+					// Viscosity
+					float v_ij = dot(_velocity[i] - _velocity[j], vec_ij);
+					if (v_ij < 0) {
+						float v = -2.0 * _para->alpha * _para->particle_radius * _para->C0 / fmaxf(M_EPS, _density[i] + _density[j]);
+						_delta_viscosity[i] -= _para->mass * cub_ker_deri * (vec_ij / len_ij) *
+							v_ij * v / fmaxf(M_EPS, Pow2(len_ij) + 0.01 * Pow2(_para->particle_radius));
+					}
 				}
 			}
 		}
 	}
 }
-
-/*
-__global__ void ComputeDensity(	SPHSystem* _para,
-								int* _block_pidx, int* _block_pnum,
-								float* _delta_density,
-								int3* _block_offset,
-								float3* _cur_pos, float3* _velocity) {
-
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = _para->block_dim;
-	int3 threadIdx_i = make_int3(threadIdx.x, threadIdx.y, threadIdx.z);
-	int bid = GetIdx1D(blockIdx_i, blockDim_i);
-	//printf("tid: %d, bid: %d, pnum: %d\n", threadIdx.x, bid, _block_pnum[bid]);
-
-	if (threadIdx.x >= _block_pnum[bid]) { return; }
-	int i = _block_pidx[bid] + threadIdx.x; // for each particle[i]
-	_delta_density[i] = 0.0;
-	// for each block 
-	for (int ii = 0; ii < 27; ii++) {
-		int3 blockIdx_nei = blockIdx_i + _block_offset[ii];
-		if (IdxIsValid(blockIdx_nei, blockDim_i)) {
-			int bid_nei = GetIdx1D(blockIdx_nei, blockDim_i);
-			for (int j = _block_pidx[bid_nei]; j < _block_pidx[bid_nei] + _block_pnum[bid_nei]; j++) { // find neighbour particle[j]
-				if (i == j) continue;
-				float3 vec_ij = _cur_pos[i] - _cur_pos[j];
-				float len_ij = Norm2(vec_ij);
-				len_ij = fmaxf(len_ij, M_EPS);
-				_delta_density[i] += _para->mass * cubic_kernel(_para->dim, len_ij, _para->h) * dot((_velocity[i] - _velocity[j]), (vec_ij / len_ij));
-			}
-		}
-	}
-
-#ifdef DEBUG
-	//printf("=====Density=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, i, _cur_pos[i].x, _cur_pos[i].y, _cur_pos[i].z);
-#endif // DEBUG
-}
-
-
-__global__ void ComputePressure(SPHSystem* para,
-								int* block_pidx, int* block_pnum,
-								float* pressure, float* density,
-								int3* block_offset,
-								float3* cur_pos, float3* delta_pressure) {
-
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = para->block_dim;
-	int3 threadIdx_i = make_int3(threadIdx.x, threadIdx.y, threadIdx.z);
-	int bid = GetIdx1D(blockIdx_i, blockDim_i);
-	if (threadIdx.x >= block_pnum[bid]) { return; }
-	int i = block_pidx[bid] + threadIdx.x; // for each particle[i]
-	delta_pressure[i] = make_float3(0, 0, 0);
-	// for each block 
-	for (int ii = 0; ii < 27; ii++) {
-		int3 blockIdx_nei = blockIdx_i + block_offset[ii];
-		if (IdxIsValid(blockIdx_nei, blockDim_i)) {
-			int bid_nei = GetIdx1D(blockIdx_nei, blockDim_i);
-			for (int j = block_pidx[bid_nei]; j < block_pidx[bid_nei] + block_pnum[bid_nei]; j++) { // find neighbour particle[j]
-				if (i == j) continue;
-				float3 vec_ij = cur_pos[i] - cur_pos[j];
-				float len_ij = Norm2(vec_ij);
-				len_ij = fmaxf(len_ij, M_EPS);
-				delta_pressure[i] -= para->mass * cubic_kernel(para->dim, len_ij, para->h) * (vec_ij / len_ij) *
-					(_pressure[i] / Pow2(_density[i] + M_EPS) + _pressure[j] / Pow2(_density[j] + M_EPS));
-			}
-		}
-	}
-
-#ifdef DEBUG
-	//printf("=====Pressure=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
-#endif // DEBUG
-}
-
-
-__global__ void ComputeViscosity(	SPHSystem* para,
-									int* block_pidx, int* block_pnum,
-									float* density,
-									int3* block_offset,
-									float3* cur_pos, float3* delta_viscosity, float3* velocity) {
-
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = para->block_dim;
-	int3 threadIdx_i = make_int3(threadIdx.x, threadIdx.y, threadIdx.z);
-	int bid = GetIdx1D(blockIdx_i, blockDim_i);
-	if (threadIdx.x >= block_pnum[bid]) { return; }
-	int i = block_pidx[bid] + threadIdx.x; // for each particle[i]
-	delta_viscosity[i] = make_float3(0, 0, 0);
-	// for each block 
-	for (int ii = 0; ii < 27; ii++) {
-		int3 blockIdx_nei = blockIdx_i + block_offset[ii];
-		if (IdxIsValid(blockIdx_nei, blockDim_i)) {
-			int bid_nei = GetIdx1D(blockIdx_nei, blockDim_i);
-			for (int j = block_pidx[bid_nei]; j < block_pidx[bid_nei] + block_pnum[bid_nei]; j++) { // find neighbour particle[j]
-				if (i == j) continue;
-				float3 vec_ij = cur_pos[i] - cur_pos[j];
-				float len_ij = Norm2(vec_ij);
-				len_ij = fmaxf(len_ij, M_EPS);
-				float v_ij = dot(velocity[i] - velocity[j], vec_ij);
-				// Artifical ciscosity
-				if (v_ij < 0) {
-					float v = -2.0 * para->alpha * para->particle_radius * para->C0 / fmaxf(M_EPS, density[i] + density[j]);
-					delta_viscosity[i] -= para->mass * cubic_kernel(para->dim, len_ij, para->h) * (vec_ij / len_ij) *
-						v_ij * v / (Pow2(len_ij) + 0.01 * Pow2(para->particle_radius));
-				}
-			}
-		}
-	}
-
-#ifdef DEBUG
-	//printf("=====Viscosity=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
-#endif // DEBUG
-}
-*/
 
 __global__ void ComputeVelocity(SPHSystem* para,
 								int* block_pidx, int* block_pnum,
@@ -409,41 +316,60 @@ __global__ void ConfineToBoundary(	SPHSystem* para, curandState* devStates,
 	// change position if outside
 	float3 bmin = make_float3(para->particle_radius);
 	float3 bmax = para->box_size - para->particle_radius;
+
+#ifdef CONFINE_RANDOM
 	if (next_pos[i].x <= bmin.x) {
-		//next_pos[i].x = bmin.x + M_EPS * cudaRandomFloat(devStates, i);
-		next_pos[i].x = min(bmax.x, bmin.x + (bmin.x - next_pos[i].x)* ETA);
+		next_pos[i].x = bmin.x + M_EPS * cudaRandomFloat(devStates, i);
+}
+	else if (next_pos[i].x >= bmax.x) {
+		next_pos[i].x = bmax.x - M_EPS * cudaRandomFloat(devStates, i);
+	}
+
+	if (next_pos[i].y <= bmin.y) {
+		next_pos[i].y = bmin.y + M_EPS * cudaRandomFloat(devStates, i);
+	}
+	else if (next_pos[i].y >= bmax.y) {
+		next_pos[i].y = bmax.y - M_EPS * cudaRandomFloat(devStates, i);
+	}
+
+	if (next_pos[i].z <= bmin.z) {
+		next_pos[i].z = bmin.z + M_EPS * cudaRandomFloat(devStates, i);
+	}
+	else if (next_pos[i].z >= bmax.z) {
+		next_pos[i].z = bmax.z - M_EPS * cudaRandomFloat(devStates, i);
+	}
+	// change velocity
+	velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
+#else
+	float ETA = para->eta;
+	if (next_pos[i].x <= bmin.x) {
+		next_pos[i].x = min(bmax.x, bmin.x + (bmin.x - next_pos[i].x) * ETA);
 		velocity[i].x = -velocity[i].x * ETA;
 	}
 	else if (next_pos[i].x >= bmax.x) {
-		//next_pos[i].x = bmax.x - M_EPS * cudaRandomFloat(devStates, i);
 		next_pos[i].x = max(bmin.x, bmax.x - (next_pos[i].x - bmax.x) * ETA);
 		velocity[i].x = -velocity[i].x * ETA;
 	}
 
-	if (next_pos[i].y <= bmin.y){
-		//next_pos[i].y = bmin.y + M_EPS * cudaRandomFloat(devStates, i);
+	if (next_pos[i].y <= bmin.y) {
 		next_pos[i].y = min(bmax.y, bmin.y + (bmin.y - next_pos[i].y) * ETA);
 		velocity[i].y = -velocity[i].y * ETA;
 	}
 	else if (next_pos[i].y >= bmax.y) {
-		//next_pos[i].y = bmax.y - M_EPS * cudaRandomFloat(devStates, i);
 		next_pos[i].y = max(bmin.y, bmax.y - (next_pos[i].y - bmax.y) * ETA);
 		velocity[i].y = -velocity[i].y * ETA;
 	}
 
 	if (next_pos[i].z <= bmin.z) {
-		//next_pos[i].z = bmin.z + M_EPS * cudaRandomFloat(devStates, i);
 		next_pos[i].z = min(bmax.z, bmin.z + (bmin.z - next_pos[i].z) * ETA);
 		velocity[i].z = -velocity[i].z * ETA;
 	}
 	else if (next_pos[i].z >= bmax.z) {
-		//next_pos[i].z = bmax.z - M_EPS * cudaRandomFloat(devStates, i);
 		next_pos[i].z = max(bmin.z, bmax.z - (next_pos[i].z - bmax.z) * ETA);
 		velocity[i].z = -velocity[i].z * ETA;
 	}
 
-	// change velocity
-	//velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
+#endif // CONFINE_RANDOM
 }
 
 
@@ -545,8 +471,8 @@ __global__ void ComputeBlockIdxPnum(SPHSystem* para,
 			block_pidx[particle_bid[i]] = i;
 		}
 		block_pnum[particle_bid[i]]++;
-		if (block_pnum[particle_bid[i]] > 256)
-			printf("Block %d ERROR, exceed threads number", particle_bid[i]);
+		if (block_pnum[particle_bid[i]] > para->block_thread_num)
+			printf("Block %d ERROR, exceed threads number\n", particle_bid[i]);
 	}
 }
 
@@ -603,7 +529,7 @@ void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cuda
 		ComputeBlockIdxPnum <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum);
 		cudaDeviceSynchronize();
 
-		ComputeAll <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, delta_density, density, pressure, block_offset, cur_pos, delta_pressure, delta_viscosity, velocity);
+		ComputeDelta <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, delta_density, density, pressure, block_offset, cur_pos, delta_pressure, delta_viscosity, velocity);
 		cudaDeviceSynchronize();
 
 		//ComputeDensity <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, delta_density, block_offset, cur_pos, velocity);

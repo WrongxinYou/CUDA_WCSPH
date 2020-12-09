@@ -38,6 +38,7 @@ public:
 	float spiky_grad_factor;
 	float mass;
 	float time_delta;
+	float eta;
 
 
 public:
