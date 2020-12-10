@@ -5,8 +5,11 @@
 #include <thrust/execution_policy.h>
 #include <time.h>
 
+#define MEMCPY_TIME 7
 #define COPY_TIME 4
 //#define CONFINE_RANDOM
+#define CUDA_MEMCPY_ASYNC
+#define CUDA_MEMSET_ASYNC
 
 // Device 
 int3 block_offset_host[] = {
@@ -109,8 +112,20 @@ __HOSTDEV__ float p_update(float rho, float rho0, float C0, float gamma) {
 void InitDeviceSystem(SPHSystem* para, float* dens_init, float3* pos_init, float3* velo_init) {
 
 	int num = para->particle_num;
+#if defined (CUDA_MEMCPY_ASYNC) || defined (CUDA_MEMSET_ASYNC)
+	cudaStream_t stream[MEMCPY_TIME];
+	for (int i = 0; i < MEMCPY_TIME; i++) {
+		checkCudaErrors(cudaStreamCreate(&stream[i]));
+	}
+#endif // CUDA_MEMCPY_ASYNC || CUDA_MEMSET_ASYNC
+
 	checkCudaErrors(cudaMalloc(&sph_device, sizeof(SPHSystem)));
+#ifdef CUDA_MEMCPY_ASYNC
+	checkCudaErrors(cudaMemcpyAsync(sph_device, para, sizeof(SPHSystem), cudaMemcpyHostToDevice, stream[0]));
+#else
 	checkCudaErrors(cudaMemcpy(sph_device, para, sizeof(SPHSystem), cudaMemcpyHostToDevice));
+#endif // CUDA_MEMCPY_ASYNC
+	
 
 	checkCudaErrors(cudaMalloc(&particle_bid, COPY_TIME * num * sizeof(int)));
 
@@ -118,37 +133,73 @@ void InitDeviceSystem(SPHSystem* para, float* dens_init, float3* pos_init, float
 	checkCudaErrors(cudaMalloc(&block_pnum, para->block_num * sizeof(int)));
 
 	checkCudaErrors(cudaMalloc(&block_offset, 27 * sizeof(int3)));
+#ifdef CUDA_MEMCPY_ASYNC
+	checkCudaErrors(cudaMemcpyAsync(block_offset, block_offset_host, 27 * sizeof(int3), cudaMemcpyHostToDevice, stream[1]));
+#else
 	checkCudaErrors(cudaMemcpy(block_offset, block_offset_host, 27 * sizeof(int3), cudaMemcpyHostToDevice));
+#endif // CUDA_MEMCPY_ASYNC
+
 
 	checkCudaErrors(cudaMalloc((void**)&devStates, num * sizeof(curandState)));
 
 	checkCudaErrors(cudaMalloc(&color, num * sizeof(float3)));
 
+
 	checkCudaErrors(cudaMalloc(&cur_pos, num * sizeof(float3)));
+#ifdef CUDA_MEMCPY_ASYNC
+	checkCudaErrors(cudaMemcpyAsync(cur_pos, pos_init, num * sizeof(float3), cudaMemcpyHostToDevice, stream[2]));
+#else
 	checkCudaErrors(cudaMemcpy(cur_pos, pos_init, num * sizeof(float3), cudaMemcpyHostToDevice));
+#endif // CUDA_MEMCPY_ASYNC
+
 
 	checkCudaErrors(cudaMalloc(&next_pos, num * sizeof(float3)));
+#ifdef CUDA_MEMSET_ASYNC
+	checkCudaErrors(cudaMemsetAsync(next_pos, 0, num * sizeof(float3), stream[3]));
+#else
 	checkCudaErrors(cudaMemset(next_pos, 0, num * sizeof(float3)));
+#endif // CUDA_MEMSET_ASYNC
+
 
 	checkCudaErrors(cudaMalloc(&density, num * sizeof(float)));
+#ifdef CUDA_MEMCPY_ASYNC
+	checkCudaErrors(cudaMemcpyAsync(density, dens_init, num * sizeof(float), cudaMemcpyHostToDevice, stream[4]));
+#else
 	checkCudaErrors(cudaMemcpy(density, dens_init, num * sizeof(float), cudaMemcpyHostToDevice));
+#endif // CUDA_MEMCPY_ASYNC
 
 	checkCudaErrors(cudaMalloc(&delta_density, num * sizeof(float)));
 
 	checkCudaErrors(cudaMalloc(&pressure, num * sizeof(float)));
+#ifdef CUDA_MEMSET_ASYNC
+	checkCudaErrors(cudaMemsetAsync(pressure, 0, num * sizeof(float), stream[5]));
+#else
 	checkCudaErrors(cudaMemset(pressure, 0, num * sizeof(float)));
+#endif // CUDA_MEMSET_ASYNC
 
 	checkCudaErrors(cudaMalloc(&delta_pressure, num * sizeof(float3)));
 
 	checkCudaErrors(cudaMalloc(&delta_viscosity, num * sizeof(float3)));
 
 	checkCudaErrors(cudaMalloc(&velocity, num * sizeof(float3)));
+#ifdef CUDA_MEMCPY_ASYNC
+	checkCudaErrors(cudaMemcpyAsync(velocity, velo_init, num * sizeof(float3), cudaMemcpyHostToDevice, stream[6]));
+#else
 	checkCudaErrors(cudaMemcpy(velocity, velo_init, num * sizeof(float3), cudaMemcpyHostToDevice));
+#endif // CUDA_MEMCPY_ASYNC
+	
 
 	checkCudaErrors(cudaMalloc(&delta_velocity, num * sizeof(float3)));
 
-	/*checkCudaErrors(cudaGetLastError());
-	checkCudaErrors(cudaDeviceSynchronize());*/
+#if defined (CUDA_MEMCPY_ASYNC) || defined (CUDA_MEMSET_ASYNC)
+	for (int i = 0; i < MEMCPY_TIME; i++) {
+		checkCudaErrors(cudaStreamSynchronize(stream[i]));
+		checkCudaErrors(cudaStreamDestroy(stream[i]));
+	}
+#endif // CUDA_MEMCPY_ASYNC || CUDA_MEMSET_ASYNC
+
+	checkCudaErrors(cudaGetLastError());
+	checkCudaErrors(cudaDeviceSynchronize());
 }
 
 void FreeDeviceSystem(SPHSystem* para) {
@@ -254,10 +305,6 @@ __global__ void ComputeVelocity(SPHSystem* para,
 		delta_velocity[i] = delta_pressure[i] + delta_viscosity[i] + G;
 		velocity[i] += para->time_delta * delta_velocity[i];
 		threadIdx_i += para->block_thread_num;
-
-#ifdef DEBUG
-		//printf("=====Velocity=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx_i, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
-#endif // DEBUG
 	}
 }
 
@@ -274,11 +321,6 @@ __global__ void ComputePosition(SPHSystem* para,
 		int i = block_pidx[bid] + threadIdx_i; // for each particle[i]
 		next_pos[i] = cur_pos[i] + para->time_delta * velocity[i];
 		threadIdx_i += para->block_thread_num;
-
-#ifdef DEBUG
-	//printf("=====Position=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx_i, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
-	//printf("=====Position=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx_i, i, velocity[i].x, velocity[i].y, velocity[i].z);
-#endif // DEBUG
 	}
 }
 
@@ -377,17 +419,13 @@ __global__ void Update(	SPHSystem* para,
 		cur_pos[i] = next_pos[i];
 
 		threadIdx_i += para->block_thread_num;
-
-#ifdef DEBUG
-		//printf("=====Update=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx_i, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
-#endif // DEBUG
 	}
 }
 
 
-__global__ void Test(	SPHSystem* para,
-						float* delta_density, float* density, float* pressure,
-						float3* cur_pos, float3* next_pos, float3* delta_pressure, float3* delta_viscocity, float3* delta_velocity, float3* velocity) {
+__global__ void DebugOutput(SPHSystem* para,
+							float* delta_density, float* density, float* pressure,
+							float3* cur_pos, float3* next_pos, float3* delta_pressure, float3* delta_viscocity, float3* delta_velocity, float3* velocity) {
 								
 	for (int i = 0; i < para->particle_num; i++) {
 		printf("Particle #%d: \n", i);
@@ -514,16 +552,32 @@ void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cuda
 
 	for (int i = 0; i < para->step_each_frame; i++) {
 
-		//Test <<<1, 1 >>> (sph_device, delta_density, density, pressure, cur_pos, next_pos, delta_pressure, delta_viscosity, delta_velocity, velocity);
+		//DebugOutput <<<1, 1 >>> (sph_device, delta_density, density, pressure, cur_pos, next_pos, delta_pressure, delta_viscosity, delta_velocity, velocity);
 		//cudaDeviceSynchronize();
 
 		ComputeBid <<<1, 1 >>> (sph_device, particle_bid, cur_pos);
 		cudaDeviceSynchronize();
 
 		int num = para->particle_num;
+
+#ifdef CUDA_MEMCPY_ASYNC
+		cudaStream_t stream[COPY_TIME];
+#endif // CUDA_MEMCPY_ASYNC
 		for (int k = 1; k < COPY_TIME; k++) {
+#ifdef CUDA_MEMCPY_ASYNC
+			checkCudaErrors(cudaStreamCreate(&stream[k]));
+			checkCudaErrors(cudaMemcpyAsync(particle_bid + num * k, particle_bid, num * sizeof(int), cudaMemcpyDeviceToDevice, stream[k]));
+#else
 			checkCudaErrors(cudaMemcpy(particle_bid + num * k, particle_bid, num * sizeof(int), cudaMemcpyDeviceToDevice));
+#endif // CUDA_MEMCPY_ASYNC
 		}
+#ifdef CUDA_MEMCPY_ASYNC
+		for (int k = 1; k < COPY_TIME; k++) {
+			checkCudaErrors(cudaStreamSynchronize(stream[k]));
+			checkCudaErrors(cudaStreamDestroy(stream[k]));
+		}
+#endif // CUDA_MEMCPY_ASYNC
+
 
 		SortParticles <<<COPY_TIME, 1 >>> (sph_device, particle_bid, density, pressure, cur_pos, velocity);
 		cudaDeviceSynchronize();
