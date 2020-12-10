@@ -43,9 +43,13 @@ SPHSystem::SPHSystem() {
 	CFL_a = 0.20;
 	poly6_factor = 315.0 / 64.0 / M_PI;
 	spiky_grad_factor = -45.0 / M_PI;
+	cubic_factor1D = 2.0 / 3.0;
+	cubic_factor2D = 10.0 / 7.0;
+	cubic_factor3D = 1.0;
 	mass = pow(particle_radius, dim) * rho0;
 	time_delta = 0.1 * h / C0;
 	eta = 0.8; // confine boundary loss coefficient
+	f_air = 0.001; // air_resistance
 }
 
 //SPHSystem::SPHSystem() {}

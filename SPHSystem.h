@@ -12,7 +12,8 @@ public:
 	int3 particle_dim; // number of particles in x, y, z axis to intialize
 	int particle_num;
 	float particle_radius;
-	float3 velo_init_min, velo_init_max;
+	float3 velo_init_min;
+	float3 velo_init_max;
 
 	// Device Parameters
 	float3 block_size;
@@ -36,10 +37,13 @@ public:
 	float CFL_a;
 	float poly6_factor;
 	float spiky_grad_factor;
+	float cubic_factor1D;
+	float cubic_factor2D;
+	float cubic_factor3D;
 	float mass;
 	float time_delta;
-	float eta;
-
+	float eta;				// confine boundary loss coefficient
+	float f_air;			// air_resistance
 
 public:
 	SPHSystem();

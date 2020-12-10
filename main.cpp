@@ -42,13 +42,19 @@ unsigned int position_vbo, color_vbo;
 
 // gl functions
 void initScene(SPHSystem* sys);
+void drawParticles();
 void displayFunc();
-void idleFunc();
+void idleFunc(); 
+void closeWindow();
 void mouseMotionDragFunc(int x, int y);
 void mouseMotionFunc(int x, int y);
 void mouseButtonFunc(int button, int state, int x, int y);
 void reshapeFunc(int w, int h);
 void keyboardFunc(unsigned char key, int x, int y);
+// construct function
+void initFluidSystem();
+void ConstructFromJsonFile(SPHSystem* sys, const char* filename);
+void ConstructFromJson(SPHSystem* sys, json config);
 
 // box and board
 float box_size = 1.0;
@@ -70,10 +76,16 @@ float3* pos_init;
 float3* velo_init;
 float* dens_init;
 
-void ConstructFromJsonFile(SPHSystem* sys, const char* filename);
-void ConstructFromJson(SPHSystem* sys, json config);
-
 void initFluidSystem() {
+
+	int device_cnt, device_num = 0;
+	checkCudaErrors(cudaGetDeviceCount(&device_cnt));
+	std::cout << "Total CUDA Device Num: " << device_cnt << std::endl;
+
+	checkCudaErrors(cudaSetDeviceFlags(cudaDeviceScheduleYield | cudaDeviceMapHost | cudaDeviceLmemResizeToMax));
+
+	std::cout << "Set Device Num: " << device_num << std::endl;
+	checkCudaErrors(cudaSetDevice(device_num));
 
 	sph_host = new SPHSystem();
 	ConstructFromJsonFile(sph_host, "SPH_config.json");
@@ -225,13 +237,6 @@ void initScene(SPHSystem* sys) {
 
 void drawParticles() {
 
-	// update color
-	//if (frameCnt == 0)
-	//{
-	//	getFirstFrame(sph_host, cuda_position_resource, cuda_color_resource);
-	//}
-	getNextFrame(sph_host, cuda_position_resource, cuda_color_resource);
-
 	glBindBuffer(GL_ARRAY_BUFFER, position_vbo);
 	glVertexPointer(3, GL_FLOAT, 0, nullptr);
 	glEnableClientState(GL_VERTEX_ARRAY);
@@ -246,10 +251,6 @@ void drawParticles() {
 	glDisableClientState(GL_VERTEX_ARRAY);
 	glDisableClientState(GL_COLOR_ARRAY);
 
-}
-
-void displayFunc() {
-
 	//glutSolidSphere
 	if (interrupt)
 		return;
@@ -257,6 +258,31 @@ void displayFunc() {
 #ifdef OUTPUT_FRAME_NUM
 	std::cout << "frame: " << frameCnt++ << std::endl;
 #endif // OUTPUT_FRAME_NUM
+
+	// update color
+	getNextFrame(sph_host, cuda_position_resource, cuda_color_resource);
+
+	if (oneFrame) {
+		interrupt = true;
+	}
+}
+
+void screendump(int W, int H) {
+	FILE* out = fopen("screenshot.tga", "wb");
+	char* pixel_data = new char[3 * W * H];
+	short  TGAhead[] = { 0, 2, 0, 0, 0, 0, W, H, 24 };
+
+	glReadBuffer(GL_FRONT);
+	glReadPixels(0, 0, W, H, GL_BGR, GL_UNSIGNED_BYTE, pixel_data);
+
+	fwrite(&TGAhead, sizeof(TGAhead), 1, out);
+	fwrite(pixel_data, 3 * W * H, 1, out);
+	fclose(out);
+
+	delete[] pixel_data;
+}
+
+void displayFunc() {
 
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -306,9 +332,6 @@ void displayFunc() {
 
 	glutSwapBuffers();
 
-	if (oneFrame) {
-		interrupt = true;
-	}
 }
 
 void closeWindow() {
@@ -531,8 +554,10 @@ void ConstructFromJson(SPHSystem* sys, json config) {
 	}
 	{
 		auto tmp = config["box_margin_coefficient"];
-		float x = float(tmp);
-		sys->box_margin = sys->box_size * x;
+		float x = float(tmp[0]);
+		float y = float(tmp[1]);
+		float z = float(tmp[2]);
+		sys->box_margin = sys->box_size * make_float3(x, y, z);
 	}
 
 	// Function Parameters
@@ -590,6 +615,21 @@ void ConstructFromJson(SPHSystem* sys, json config) {
 		float x = float(tmp);
 		sys->spiky_grad_factor = x / M_PI;
 	}
+	{
+		float x = config["cubic_factor_coefficient1D1"];
+		float y = config["cubic_factor_coefficient1D2"];
+		sys->cubic_factor1D = x / y;
+	}
+	{
+		float x = config["cubic_factor_coefficient2D1"];
+		float y = config["cubic_factor_coefficient2D2"];
+		sys->cubic_factor2D = x / y;
+	}
+	{
+		float x = config["cubic_factor_coefficient3D1"];
+		float y = config["cubic_factor_coefficient3D2"];
+		sys->cubic_factor3D = x / y;
+	}
 	sys->mass = pow(sys->particle_radius, sys->dim) * sys->rho0;
 	{
 		auto tmp = config["time_delta_coefficient"];
@@ -614,5 +654,10 @@ void ConstructFromJson(SPHSystem* sys, json config) {
 		auto tmp = config["eta"];
 		float x = float(tmp);
 		sys->eta = x;
+	}
+	{
+		auto tmp = config["f_air"];
+		float x = float(tmp);
+		sys->f_air = x;
 	}
 }
