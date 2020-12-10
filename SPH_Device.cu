@@ -5,7 +5,8 @@
 #include <thrust/execution_policy.h>
 #include <time.h>
 
-#define COPY_TIME 5
+#define COPY_TIME 4
+//#define CONFINE_RANDOM
 
 // Device 
 int3 block_offset_host[] = {
@@ -39,7 +40,6 @@ float* delta_density = NULL;
 float* pressure = NULL;
 float3* delta_pressure = NULL;
 
-float3* viscosity = NULL;
 float3* delta_viscosity = NULL;
 
 float3* velocity = NULL;
@@ -52,9 +52,8 @@ __device__ float cudaRandomFloat(curandState* state, int pid) {
 	return curand_uniform(&localState);
 }
 
-__HOSTDEV__ float spiky_gradient(int dim, float dist, float cutoff) {
+__HOSTDEV__ float spiky_gradient(int dim, float dist, float cutoff, float spiky_grad_factor) {
 	float res = 0;
-	float spiky_grad_factor = 45.0 / M_PI;
 	float x;
 	if (0 < dist && dist < cutoff) {
 		x = 1.0 - Pow2(dist / cutoff);
@@ -63,9 +62,8 @@ __HOSTDEV__ float spiky_gradient(int dim, float dist, float cutoff) {
 	return res;
 }
 
-__HOSTDEV__ float poly6_kernel(int dim, float dist, float cutoff) {
+__HOSTDEV__ float poly6_kernel(int dim, float dist, float cutoff, float poly6_factor) {
 	float res = 0;
-	float poly6_factor = 315.0 / 64.0 / M_PI;
 	float x;
 	if (0 < dist && dist < cutoff) {
 		x = 1.0 - Pow2(dist) / Pow2(cutoff);
@@ -74,19 +72,10 @@ __HOSTDEV__ float poly6_kernel(int dim, float dist, float cutoff) {
 	return res;
 }
 
-__HOSTDEV__ float cubic_kernel(int dim, float dist, float cutoff) {
+__HOSTDEV__ float cubic_kernel(int dim, float dist, float cutoff, float cubic_factor) {
 	// B - cubic spline smoothing kernel
 	float res = 0;
-	float k;
-	if (dim == 1) {
-		k  = 2.0 / (3.0 * pow(cutoff, dim) * M_PI);
-	}
-	else if (dim == 2) {
-		k = 10.0 / (7.0 * pow(cutoff, dim) * M_PI);
-	}
-	else { // dim == 3
-		k = 1.0 / (1.0 * pow(cutoff, dim) * M_PI);
-	}
+	float k = cubic_factor / pow(cutoff, dim) / M_PI;
 	float q = dist / cutoff;
 	if (q <= 1.0 + M_EPS) {
 		res = k * (1.0 - 3.0 / 2.0 * Pow2(q) * (1.0 - q / 2.0));
@@ -97,19 +86,10 @@ __HOSTDEV__ float cubic_kernel(int dim, float dist, float cutoff) {
 	return res;
 }
 
-__HOSTDEV__ float cubic_kernel_derivative(int dim, float dist, float cutoff) {
+__HOSTDEV__ float cubic_kernel_derivative(int dim, float dist, float cutoff, float cubic_factor) {
 	// B - cubic spline smoothing kernel
 	float res = 0;
-	float k;
-	if (dim == 1) {
-		k = 2.0 / (3.0 * pow(cutoff, dim) * M_PI);
-	}
-	else if (dim == 2) {
-		k = 10.0 / (7.0 * pow(cutoff, dim) * M_PI);
-	}
-	else { // dim == 3
-		k = 1.0 / (1.0 * pow(cutoff, dim) * M_PI);
-	}
+	float k = cubic_factor / pow(cutoff, dim) / M_PI;
 	float q = dist / cutoff;
 	if (q <= 1.0 + M_EPS) {
 		res = (k / cutoff) * (-3 * q + 2.25 * Pow2(q));
@@ -160,9 +140,6 @@ void InitDeviceSystem(SPHSystem* para, float* dens_init, float3* pos_init, float
 
 	checkCudaErrors(cudaMalloc(&delta_pressure, num * sizeof(float3)));
 
-	checkCudaErrors(cudaMalloc(&viscosity, num * sizeof(float3)));
-	checkCudaErrors(cudaMemset(viscosity, 0, num * sizeof(float3)));
-
 	checkCudaErrors(cudaMalloc(&delta_viscosity, num * sizeof(float3)));
 
 	checkCudaErrors(cudaMalloc(&velocity, num * sizeof(float3)));
@@ -199,7 +176,6 @@ void FreeDeviceSystem(SPHSystem* para) {
 	checkCudaErrors(cudaFree(pressure));
 	checkCudaErrors(cudaFree(delta_pressure));
 
-	checkCudaErrors(cudaFree(viscosity));
 	checkCudaErrors(cudaFree(delta_viscosity));
 
 	checkCudaErrors(cudaFree(velocity));
@@ -214,35 +190,33 @@ __global__ void ComputeDelta( SPHSystem* _para,
 
 	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
 	int3 blockDim_i = _para->block_dim;
-	int3 threadIdx_i = make_int3(threadIdx.x, threadIdx.y, threadIdx.z);
+	int threadIdx_i = threadIdx.x;
 	int bid = GetIdx1D(blockIdx_i, blockDim_i);
 
-	if (threadIdx.x >= _block_pnum[bid]) { return; }
-	// for each particle[i]
-	int i = _block_pidx[bid] + threadIdx.x;
-	// Initialize
-	_delta_density[i] = 0.0;
-	_delta_pressure[i] = make_float3(0, 0, 0);
-	_delta_viscosity[i] = make_float3(0, 0, 0);
+	while (threadIdx_i < _block_pnum[bid]) {
+		// for each particle[i]
+		int i = _block_pidx[bid] + threadIdx_i;
+		// Initialize
+		_delta_density[i] = 0.0;
+		_delta_pressure[i] = make_float3(0, 0, 0);
+		_delta_viscosity[i] = make_float3(0, 0, 0);
 
-	// for each block 
-	for (int ii = 0; ii < 27; ii++) {
-		int3 blockIdx_nei = blockIdx_i + _block_offset[ii];
-		if (IdxIsValid(blockIdx_nei, blockDim_i)) {
-			int bid_nei = GetIdx1D(blockIdx_nei, blockDim_i);
-			// find neighbour particle[j]
-			for (int j = _block_pidx[bid_nei]; j < _block_pidx[bid_nei] + _block_pnum[bid_nei]; j++) {
-				if (i == j) continue;
-				float3 vec_ij = _cur_pos[i] - _cur_pos[j];
-				float len_ij = Norm2(vec_ij);
-				len_ij = fmaxf(len_ij, M_EPS);
-				float pol_ker = poly6_kernel(_para->dim, len_ij, _para->h);
-				float spi_ker = spiky_gradient(_para->dim, len_ij, _para->h);
-				float cub_ker = cubic_kernel(_para->dim, len_ij, _para->h);
-				float cub_ker_deri = cubic_kernel_derivative(_para->dim, len_ij, _para->h);
-				// cut off length
-				if ((spi_ker >= 0.0 ) && (len_ij / _para->h) <= 2.0 ) {
-
+		// for each block 
+		for (int ii = 0; ii < 27; ii++) {
+			int3 blockIdx_nei = blockIdx_i + _block_offset[ii];
+			if (IdxIsValid(blockIdx_nei, blockDim_i)) {
+				int bid_nei = GetIdx1D(blockIdx_nei, blockDim_i);
+				// find neighbour particle[j]
+				for (int j = _block_pidx[bid_nei]; j < _block_pidx[bid_nei] + _block_pnum[bid_nei]; j++) {
+					if (i == j) continue;
+					float3 vec_ij = _cur_pos[i] - _cur_pos[j];
+					float len_ij = Norm2(vec_ij);
+					len_ij = fmaxf(len_ij, M_EPS);
+					//float cub_ker = cubic_kernel(_para->dim, len_ij, _para->h, _para->cubic_factor3D);
+					float cub_ker_deri = cubic_kernel_derivative(_para->dim, len_ij, _para->h, _para->cubic_factor3D);
+					//float pol_ker = poly6_kernel(_para->dim, len_ij, _para->h, _para->poly6_factor);
+					//float spi_ker = spiky_gradient(_para->dim, len_ij, _para->h, _para->spiky_grad_factor);
+					// cut off length
 					// Density
 					_delta_density[i] += _para->mass * cub_ker_deri * dot((_velocity[i] - _velocity[j]), (vec_ij / len_ij));
 
@@ -260,6 +234,7 @@ __global__ void ComputeDelta( SPHSystem* _para,
 				}
 			}
 		}
+		threadIdx_i += _para->block_thread_num;
 	}
 }
 
@@ -271,17 +246,19 @@ __global__ void ComputeVelocity(SPHSystem* para,
 
 	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
 	int3 blockDim_i = para->block_dim;
-	int3 threadIdx_i = make_int3(threadIdx.x, threadIdx.y, threadIdx.z);
+	int threadIdx_i = threadIdx.x;
 	int bid = GetIdx1D(blockIdx_i, blockDim_i);
-	if (threadIdx.x >= block_pnum[bid]) { return; }
-	int i = block_pidx[bid] + threadIdx.x; // for each particle[i]
-	float3 G = make_float3(0, para->gravity, 0);
-	delta_velocity[i] = delta_pressure[i] + delta_viscosity[i] + G;
-	velocity[i] += para->time_delta * delta_velocity[i];
+	while (threadIdx_i < block_pnum[bid]) {
+		int i = block_pidx[bid] + threadIdx_i; // for each particle[i]
+		float3 G = make_float3(0, para->gravity, 0);
+		delta_velocity[i] = delta_pressure[i] + delta_viscosity[i] + G;
+		velocity[i] += para->time_delta * delta_velocity[i];
+		threadIdx_i += para->block_thread_num;
 
 #ifdef DEBUG
-	//printf("=====Velocity=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
+		//printf("=====Velocity=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx_i, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
 #endif // DEBUG
+	}
 }
 
 
@@ -291,16 +268,18 @@ __global__ void ComputePosition(SPHSystem* para,
 
 	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
 	int3 blockDim_i = para->block_dim;
-	int3 threadIdx_i = make_int3(threadIdx.x, threadIdx.y, threadIdx.z);
+	int threadIdx_i = threadIdx.x;
 	int bid = GetIdx1D(blockIdx_i, blockDim_i); 
-	if (threadIdx.x >= block_pnum[bid]) { return; }
-	int i = block_pidx[bid] + threadIdx.x; // for each particle[i]
-	next_pos[i] = cur_pos[i] + para->time_delta * velocity[i];
+	while (threadIdx_i < block_pnum[bid]) {
+		int i = block_pidx[bid] + threadIdx_i; // for each particle[i]
+		next_pos[i] = cur_pos[i] + para->time_delta * velocity[i];
+		threadIdx_i += para->block_thread_num;
 
 #ifdef DEBUG
-	//printf("=====Position=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
-	//printf("=====Position=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, i, velocity[i].x, velocity[i].y, velocity[i].z);
+	//printf("=====Position=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx_i, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
+	//printf("=====Position=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx_i, i, velocity[i].x, velocity[i].y, velocity[i].z);
 #endif // DEBUG
+	}
 }
 
 
@@ -310,67 +289,69 @@ __global__ void ConfineToBoundary(	SPHSystem* para, curandState* devStates,
 
 	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
 	int3 blockDim_i = para->block_dim;
-	int3 threadIdx_i = make_int3(threadIdx.x, threadIdx.y, threadIdx.z);
+	int threadIdx_i = threadIdx.x;
 	int bid = GetIdx1D(blockIdx_i, blockDim_i);
-	if (threadIdx.x >= block_pnum[bid]) { return; }
-	int i = block_pidx[bid] + threadIdx.x; // for each particle[i]
-	// change position if outside
-	float3 bmin = make_float3(para->particle_radius);
-	float3 bmax = para->box_size - para->particle_radius;
+	while (threadIdx_i < block_pnum[bid]) {
+		int i = block_pidx[bid] + threadIdx_i; // for each particle[i]
+		// change position if outside
+		float3 bmin = make_float3(para->particle_radius);
+		float3 bmax = para->box_size - para->particle_radius;
 
 #ifdef CONFINE_RANDOM
-	if (next_pos[i].x <= bmin.x) {
-		next_pos[i].x = bmin.x + M_EPS * cudaRandomFloat(devStates, i);
-}
-	else if (next_pos[i].x >= bmax.x) {
-		next_pos[i].x = bmax.x - M_EPS * cudaRandomFloat(devStates, i);
-	}
+		if (next_pos[i].x <= bmin.x) {
+			next_pos[i].x = bmin.x + M_EPS * cudaRandomFloat(devStates, i);
+		}
+		else if (next_pos[i].x >= bmax.x) {
+			next_pos[i].x = bmax.x - M_EPS * cudaRandomFloat(devStates, i);
+		}
 
-	if (next_pos[i].y <= bmin.y) {
-		next_pos[i].y = bmin.y + M_EPS * cudaRandomFloat(devStates, i);
-	}
-	else if (next_pos[i].y >= bmax.y) {
-		next_pos[i].y = bmax.y - M_EPS * cudaRandomFloat(devStates, i);
-	}
+		if (next_pos[i].y <= bmin.y) {
+			next_pos[i].y = bmin.y + M_EPS * cudaRandomFloat(devStates, i);
+		}
+		else if (next_pos[i].y >= bmax.y) {
+			next_pos[i].y = bmax.y - M_EPS * cudaRandomFloat(devStates, i);
+		}
 
-	if (next_pos[i].z <= bmin.z) {
-		next_pos[i].z = bmin.z + M_EPS * cudaRandomFloat(devStates, i);
-	}
-	else if (next_pos[i].z >= bmax.z) {
-		next_pos[i].z = bmax.z - M_EPS * cudaRandomFloat(devStates, i);
-	}
-	// change velocity
-	velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
+		if (next_pos[i].z <= bmin.z) {
+			next_pos[i].z = bmin.z + M_EPS * cudaRandomFloat(devStates, i);
+		}
+		else if (next_pos[i].z >= bmax.z) {
+			next_pos[i].z = bmax.z - M_EPS * cudaRandomFloat(devStates, i);
+		}
+		// change velocity
+		velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
 #else
-	float ETA = para->eta;
-	if (next_pos[i].x <= bmin.x) {
-		next_pos[i].x = min(bmax.x, bmin.x + (bmin.x - next_pos[i].x) * ETA);
-		velocity[i].x = -velocity[i].x * ETA;
-	}
-	else if (next_pos[i].x >= bmax.x) {
-		next_pos[i].x = max(bmin.x, bmax.x - (next_pos[i].x - bmax.x) * ETA);
-		velocity[i].x = -velocity[i].x * ETA;
-	}
+		float ETA = para->eta;
+		if (next_pos[i].x <= bmin.x) {
+			next_pos[i].x = min(bmax.x, bmin.x + (bmin.x - next_pos[i].x) * ETA);
+			velocity[i].x = -velocity[i].x * ETA;
+		}
+		else if (next_pos[i].x >= bmax.x) {
+			next_pos[i].x = max(bmin.x, bmax.x - (next_pos[i].x - bmax.x) * ETA);
+			velocity[i].x = -velocity[i].x * ETA;
+		}
 
-	if (next_pos[i].y <= bmin.y) {
-		next_pos[i].y = min(bmax.y, bmin.y + (bmin.y - next_pos[i].y) * ETA);
-		velocity[i].y = -velocity[i].y * ETA;
-	}
-	else if (next_pos[i].y >= bmax.y) {
-		next_pos[i].y = max(bmin.y, bmax.y - (next_pos[i].y - bmax.y) * ETA);
-		velocity[i].y = -velocity[i].y * ETA;
-	}
+		if (next_pos[i].y <= bmin.y) {
+			next_pos[i].y = min(bmax.y, bmin.y + (bmin.y - next_pos[i].y) * ETA);
+			velocity[i].y = -velocity[i].y * ETA;
+		}
+		else if (next_pos[i].y >= bmax.y) {
+			next_pos[i].y = max(bmin.y, bmax.y - (next_pos[i].y - bmax.y) * ETA);
+			velocity[i].y = -velocity[i].y * ETA;
+		}
 
-	if (next_pos[i].z <= bmin.z) {
-		next_pos[i].z = min(bmax.z, bmin.z + (bmin.z - next_pos[i].z) * ETA);
-		velocity[i].z = -velocity[i].z * ETA;
-	}
-	else if (next_pos[i].z >= bmax.z) {
-		next_pos[i].z = max(bmin.z, bmax.z - (next_pos[i].z - bmax.z) * ETA);
-		velocity[i].z = -velocity[i].z * ETA;
-	}
-
+		if (next_pos[i].z <= bmin.z) {
+			next_pos[i].z = min(bmax.z, bmin.z + (bmin.z - next_pos[i].z) * ETA);
+			velocity[i].z = -velocity[i].z * ETA;
+		}
+		else if (next_pos[i].z >= bmax.z) {
+			next_pos[i].z = max(bmin.z, bmax.z - (next_pos[i].z - bmax.z) * ETA);
+			velocity[i].z = -velocity[i].z * ETA;
+		}
 #endif // CONFINE_RANDOM
+
+		threadIdx_i += para->block_thread_num;
+	}
 }
 
 
@@ -381,34 +362,69 @@ __global__ void Update(	SPHSystem* para,
 
 	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
 	int3 blockDim_i = para->block_dim;
-	int3 threadIdx_i = make_int3(threadIdx.x, threadIdx.y, threadIdx.z);
+	int threadIdx_i = threadIdx.x;
 	int bid = GetIdx1D(blockIdx_i, blockDim_i);
-	if (threadIdx.x >= block_pnum[bid]) { return; }
-	int i = block_pidx[bid] + threadIdx.x;
+	while (threadIdx_i < block_pnum[bid]) {
+		int i = block_pidx[bid] + threadIdx_i;
 
-	density[i] += para->time_delta * delta_density[i];
+		density[i] += para->time_delta * delta_density[i];
 
-	pressure[i] = p_update(density[i], para->rho0, para->C0, para->gamma);
+		pressure[i] = p_update(density[i], para->rho0, para->C0, para->gamma);
 
-	velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
+		velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
+		velocity[i] *= (1.0 - para->f_air); // air resistence
 
-	cur_pos[i] = next_pos[i];
+		cur_pos[i] = next_pos[i];
+
+		threadIdx_i += para->block_thread_num;
 
 #ifdef DEBUG
-	//printf("=====Update=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
+		//printf("=====Update=====\n (%d %d %d) (%d): #i: %d, curpos: (%f %f %f)\n", blockIdx.x, blockIdx.y, blockIdx.z, threadIdx_i, i, cur_pos[i].x, cur_pos[i].y, cur_pos[i].z);
 #endif // DEBUG
-
+	}
 }
 
 
-__global__ void AdaptiveStep(	SPHSystem* para,
-								float* delta_density, float* density, float* pressure,
-								float3* delta_pressure, float3* delta_viscocity, float3* delta_velocity, float3* velocity) {
+__global__ void Test(	SPHSystem* para,
+						float* delta_density, float* density, float* pressure,
+						float3* cur_pos, float3* next_pos, float3* delta_pressure, float3* delta_viscocity, float3* delta_velocity, float3* velocity) {
 								
 	for (int i = 0; i < para->particle_num; i++) {
-		printf("#%d: \n\t delta_density (%f)\n\t delta_pressure (%f, %f, %f)\n\t delta_velocity (%f, %f, %f)\n", i, delta_density[i], delta_pressure[i].x, delta_pressure[i].y, delta_pressure[i].z, delta_velocity[i].x, delta_velocity[i].y, delta_velocity[i].z);
+		printf("Particle #%d: \n", i);
+		printf("     \n\t cur_pos (%f, %f, %f), next_pos (%f, %f, %f), time_delta: %f\n", cur_pos[i].x, cur_pos[i].y, cur_pos[i].z, next_pos[i].x, next_pos[i].y, next_pos[i].z, para->time_delta);
+		printf("     \n\t delta_density (%f)\n\t delta_pressure (%f, %f, %f)\n\t delta_velocity (%f, %f, %f)\n", delta_density[i], delta_pressure[i].x, delta_pressure[i].y, delta_pressure[i].z, delta_velocity[i].x, delta_velocity[i].y, delta_velocity[i].z);
 		printf("     \n\t density (%f)\n\t pressure (%f)\n\t velocity (%f, %f, %f)\n", density[i], pressure[i], velocity[i].x, velocity[i].y, velocity[i].z);
 	}
+}
+
+
+__global__ void AdaptiveStep(	SPHSystem* para, 
+								float* density, 
+								float3* delta_velocity, float3* velocity) {
+
+	float max_v = FLT_MIN;
+	float max_a = FLT_MIN;
+	float max_r = FLT_MIN;
+	for (int i = 0; i < para->particle_num; i++) {
+		if (Norm2(velocity[i]) > max_v) {
+			max_v = Norm2(velocity[i]);
+		}
+
+		if (Norm2(delta_velocity[i]) > max_a) {
+			max_a = Norm2(delta_velocity[i]);
+		}
+
+		if (density[i] > max_r) {
+			max_r = density[i];
+		}
+	}
+
+	float dt_cfl = para->CFL_v * para->h / max_v;
+	float dt_f = para->CFL_a * sqrt(para->h / max_a);
+	float dt_a = 0.2 * para->h / (para->C0 * pow(sqrt(max_r / para->rho0), para->gamma));
+
+	para->time_delta = fminf(dt_cfl, fminf(dt_f, dt_a));
+
 }
 
 
@@ -435,7 +451,7 @@ __global__ void ComputeBid(	SPHSystem* para,
 __global__ void SortParticles(	SPHSystem* para,
 								int* particle_bid,
 								float* density, float* pressure,
-								float3* cur_pos, float3* viscosity, float3* velocity) {
+								float3* cur_pos, float3* velocity) {
 
 	int num = para->particle_num;
 	if (blockIdx.x == 0) {
@@ -448,13 +464,10 @@ __global__ void SortParticles(	SPHSystem* para,
 		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 2, particle_bid + num * 3, pressure);
 	}
 	else if (blockIdx.x == 3) {
-		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 3, particle_bid + num * 4, viscosity);
+		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 3, particle_bid + num * 4, velocity);
 	}
-	else if (blockIdx.x == 4) {
-		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 4, particle_bid + num * 5, velocity);
-	}
-	//else if (blockIdx.x == 5) {
-	//	thrust::stable_sort_by_key(thrust::device, particle_bid + num * 5, particle_bid + num * 6, next_pos);
+	//else if (blockIdx.x == 4) {
+	//	thrust::stable_sort_by_key(thrust::device, particle_bid + num * 4, particle_bid + num * 5, next_pos);
 	//}
 
 }
@@ -473,8 +486,8 @@ __global__ void ComputeBlockIdxPnum(SPHSystem* para,
 			block_pidx[particle_bid[i]] = i;
 		}
 		block_pnum[particle_bid[i]]++;
-		if (block_pnum[particle_bid[i]] > para->block_thread_num)
-			printf("Block %d ERROR, exceed threads number\n", particle_bid[i]);
+		//if (block_pnum[particle_bid[i]] > para->block_thread_num)
+		//	printf("Block %d ERROR, exceed threads number\n", particle_bid[i]);
 	}
 }
 
@@ -501,18 +514,18 @@ void getNextFrame(SPHSystem* para, cudaGraphicsResource* position_resource, cuda
 
 	for (int i = 0; i < para->step_each_frame; i++) {
 
-		//AdaptiveStep <<<1, 1 >>> (sph_device, delta_density, density, pressure, delta_pressure, delta_viscosity, delta_velocity, velocity);
+		//Test <<<1, 1 >>> (sph_device, delta_density, density, pressure, cur_pos, next_pos, delta_pressure, delta_viscosity, delta_velocity, velocity);
 		//cudaDeviceSynchronize();
 
-		ComputeBid << <1, 1 >> > (sph_device, particle_bid, cur_pos);
+		ComputeBid <<<1, 1 >>> (sph_device, particle_bid, cur_pos);
 		cudaDeviceSynchronize();
 
 		int num = para->particle_num;
-		for (int k = 0; k < COPY_TIME; k++) {
-			checkCudaErrors(cudaMemcpy(particle_bid + num * k, particle_bid + num * (k + 1), num * sizeof(int), cudaMemcpyDeviceToDevice));
+		for (int k = 1; k < COPY_TIME; k++) {
+			checkCudaErrors(cudaMemcpy(particle_bid + num * k, particle_bid, num * sizeof(int), cudaMemcpyDeviceToDevice));
 		}
 
-		SortParticles <<<COPY_TIME, 1 >>> (sph_device, particle_bid, density, pressure, cur_pos, viscosity, velocity);
+		SortParticles <<<COPY_TIME, 1 >>> (sph_device, particle_bid, density, pressure, cur_pos, velocity);
 		cudaDeviceSynchronize();
 
 		ComputeBlockIdxPnum <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum);
