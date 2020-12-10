@@ -267,21 +267,6 @@ void drawParticles() {
 	}
 }
 
-void screendump(int W, int H) {
-	FILE* out = fopen("screenshot.tga", "wb");
-	char* pixel_data = new char[3 * W * H];
-	short  TGAhead[] = { 0, 2, 0, 0, 0, 0, W, H, 24 };
-
-	glReadBuffer(GL_FRONT);
-	glReadPixels(0, 0, W, H, GL_BGR, GL_UNSIGNED_BYTE, pixel_data);
-
-	fwrite(&TGAhead, sizeof(TGAhead), 1, out);
-	fwrite(pixel_data, 3 * W * H, 1, out);
-	fclose(out);
-
-	delete[] pixel_data;
-}
-
 void displayFunc() {
 
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
