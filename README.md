@@ -1,54 +1,43 @@
-# CUDA Accelerated WCSPH Fluid Simulation
+# Real Time WCSPH Fluid Simulation
 
 ## Description
-
-Weakly compressible Smoothed-particle hydrodynamics (WCSPH), as one of the fluid simulation methods, is widely used in games, graphics and medical industry. Though there are several ways of accelerating SPH in CPU, GPU has an ideal structure for the computation of SPH. This project will implement a SPH solver on GPU. After that, it will use OpenGL for rendering the fluid particles, or use an existing rendering engine (for example, Houdini or Blender) to display the process.
+Weakly compressible Smoothed-particle hydrodynamics (WCSPH), as one of the fluid simulation methods, is widely used in games, graphics and medical industry. Though there are several ways of accelerating SPH in CPU, GPU has an ideal structure for the computation of SPH. This project implements a SPH solver on GPU. and use OpenGL for rendering fluid particles.  
 
 ## Environment
+Windows + Visual Studio  
+Language and Libraries: C++, CUDA, OpenGL, GLSL  
 
-Windows + Visual Studio
-
-Language and Libraries: C++, CUDA, OpenGL/Houdini/Blender
-
-## General Procedure
-
-<img src="fig/Flow Chart Diagram.png" width="350">  
+## Features
+- Real time 3d sph fluid simulation.  
+- Cuda OpenGL Interpolation (map Cuda address to host).  
+- SPH solver on GPU, including radix sorting, force computation and position update.  
+- Artificial viscosity.  
+- Adaptive timestep.  
+- Allow user interaction to change viewpoint, translate, scale and rotate objects.   
 
 ## Solution
-
-We plan to build a real-time SPH solver using GPU acceleration and visualize the process.
-The project is divided into two parts: fluid simulation and fluid particle visualization.
-
 ### Fluid Simulation
+The most time consuming part in SPH simulation is neighbor search. Previously, neighbor search was executed on CPU. As the number of particles increases, the running time of neighbor search will increase dramatically. In order to make more use of GPU, here we implement neighbor searching on GPU. The method is applying radix sort for particles. Thus, each block just stores its contained particle number and the first particle index. Then we compute density, pressure, viscosity and velocity for position update.  
 
-1. Problems:
-    The most time consuming part in SPH simulation is neighbor search. Previously, neighbor search was executed on CPU and GPU was only used for the remaining part. So as the number of particles increases, the running time of neighbor search will increase dramatically.
+Each block takes care of all the particles inside and each thread takes care of a single particle. When searching in neighbors, the block gets neighborhood information using block index and thread index.
+<img src="fig/CUDA Block.png" width="500">  
+<img src="fig/CUDA Block and threads.png" width="500">  
 
-2. Solution:
-    In order to make more use of GPU, here we will implement neighbor searching on GPU. The method starts with applying z-index calculation for each particle and parallel radix-sort in CUDA, which keeps the spatial information while indexing. Thus, for each block we just store its contained particle number and the first particle index. Then we compute density, force, acceleration and velocity, so that we can update positions of particles in the next frame. And so on so forth.
+The space allocation on CPU and GPU is as below. We do not allocate any space for particles on CPU as all the computation are executed on GPU. Only two pointers for mapping color and position information from GPU memory. 
+<img src="fig/space_alloc.png" width="500">  
 
-    <img src="fig/Z-index.png" width = "500">
+The computation in each time step for density, pressure, viscosity, velocity and position is described [here](https://cg.informatik.uni-freiburg.de/publications/2007_SCA_SPH.pdf). We choose a cubic kernel first derivate as our filter and add adaptive time step to avoid particle explosion.
 
-    Here are explainations from [Reference](http://maverick.inria.fr/~Prashant.Goswami/Research/Papers/SCA10_SPH.pdf)
-
-    <img src="fig/CUDA Block.png" width="500">
-
-    For each non-empty block in B, a CUDA block is generated in B' and launched with N threads (N = 4 here).
-
-    <img src="fig/CUDA Block and threads.png" width="500">
 
 ### Particle Visualization
+Cuda supports interpolate with opengl, which helps map device data to host. In order to reach higher FPS, particles are rendered using GLSL shaders. In vertex shader, it sets up particle size based on the distance between camera and the particle. In fragment shader, it renders a circle with edges and shadow. Rendering a dot to a sphere uses less time than directly rendering a sphere and needs less computation.  
 
-We will choose one of the following methods to demonstrate our result.
 
-1. Using OpenGL for rendering particles.
+## Result
+<img src="fig/CUDA_SPH.gif" width="500">  
 
-2. Export particle positions in each frame. Load the sequence in other engines (Houdini/Blender) for rendering.
+## Reference
+- [Weakly compressible SPH for free surface flows](https://cg.informatik.uni-freiburg.de/publications/2007_SCA_SPH.pdf)  
+- [Interactive SPH Simulation and Rendering on the GPU](http://maverick.inria.fr/~Prashant.Goswami/Research/Papers/SCA10_SPH.pdf)  
+- [Broad-Phase Collision Detection with CUDA](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-32-broad-phase-collision-detection-cuda)  
 
-## Current Progress
-
-We implement SPH on 2 dimension using python and Taichi lib.
-
-Next step is to use C++ and CUDA to implement 3D SPH.
-
-<img src="fig/WCSPH 2D.gif" width="500">  
