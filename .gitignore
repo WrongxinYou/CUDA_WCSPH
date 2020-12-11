@@ -5,4 +5,13 @@
 *.cubin
 *.fatbin
 
+
+*.exe
+*.exp
+*.dll
+*.lib
+*.sln
+*.user
+*.vcxproj
+*.dat
 *.un~
