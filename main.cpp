@@ -1,25 +1,25 @@
-#include "Global.h"
-#include "ShaderProgram.h"
-#include "SPHSystem.h"
-#include "SPH_Host.cuh"
-#include <gl/GL.h>
 
+#include "WCSPHSystem.h"
+#include "WCSPHSolver.cuh"
+#include "ShaderProgram.h"
+#include "handler.h"
+//#include "math_util.h"
+
+#include <gl/GL.h>
 #include <cuda_gl_interop.h>
 #include <cuda_runtime.h>
-#include <fstream>
-#include "json.hpp"
+#include <time.h>
 
 #define OUTPUT_FRAME_NUM
 
-using json = nlohmann::json;
-
 typedef enum { ROTATE, TRANSLATE, SCALE } CONTROL_STATE;
 
+const int kWindowSize[2] = { 512,512 };
 
 ///////////////////////////////////////////////////////////////////////////////
 // Dispaly Settings
 ///////////////////////////////////////////////////////////////////////////////
-int res[2] = { 512,512 };
+
 int fov = 45;
 CONTROL_STATE controlState = TRANSLATE;
 int mousePos[2];
@@ -41,7 +41,7 @@ unsigned int box_vbo, box_ebo, box_vao;
 unsigned int position_vbo, color_vbo;
 
 // gl functions
-void initScene(SPHSystem* sys);
+void initScene(WCSPHSystem* sys);
 void drawParticles();
 void displayFunc();
 void idleFunc(); 
@@ -51,80 +51,34 @@ void mouseMotionFunc(int x, int y);
 void mouseButtonFunc(int button, int state, int x, int y);
 void reshapeFunc(int w, int h);
 void keyboardFunc(unsigned char key, int x, int y);
+
 // construct function
 void initFluidSystem();
-void ConstructFromJsonFile(SPHSystem* sys, const char* filename);
-void ConstructFromJson(SPHSystem* sys, json config);
 
 // box and board
 float box_size = 1.0;
 float board_pos = 0.5f;
 
-/// TODO
-// 1. do not allow scaling
-// 2. change default operation = translate
 
-
-///////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 // SPH Settings
-///////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 cudaGraphicsResource* cuda_position_resource;
 cudaGraphicsResource* cuda_color_resource;
 
-SPHSystem* sph_host;
+WCSPHSystem* sph_host;
 float3* pos_init;
 float3* velo_init;
 float* dens_init;
 
 void initFluidSystem() {
+	srand(time(0));
 
-	int device_cnt, device_num = 0;
-	checkCudaErrors(cudaGetDeviceCount(&device_cnt));
-	std::cout << "Total CUDA Device Num: " << device_cnt << std::endl;
-
-	checkCudaErrors(cudaSetDeviceFlags(cudaDeviceScheduleYield | cudaDeviceMapHost | cudaDeviceLmemResizeToMax));
-
-	std::cout << "Set Device Num: " << device_num << std::endl;
-	checkCudaErrors(cudaSetDevice(device_num));
-
-	sph_host = new SPHSystem();
-	ConstructFromJsonFile(sph_host, "SPH_config.json");
+	sph_host = new WCSPHSystem("WCSPH_config.json");
 	int dim_max = ceil(3 / (4 * sph_host->h));
 	if (!(sph_host->block_dim <= make_int3(dim_max))) {
-		printf("WARNING: block_dimension is too large, please decrease it\n");
+		std::cout << "WARNING: block_dimension is too large, please decrease it" << std::endl;
 	}
-
-#ifdef OUTPUT_CONFIG
-	std::ofstream fout("tmp.json");
-	json config;
-	config = {
-		{"C0", 200},
-		{"CFL_a", 0.2},
-		{"CFL_v", 0.2},
-		{"alpha", 0.3},
-		{"block_dim", {3, 3, 3}},
-		{"block_thread_num", 256};
-		{"box_margin_coefficient", 0.1},
-		{"box_size", {1.0, 1.0, 1.0}},
-		{"dim", 3},
-		{"gamma", 7.0},
-		{"gravity", -9.8},
-		{"gravity_coefficient", 30},
-		{"h_coefficient", 1.3},
-		{"particle_dim", {3, 3, 3}},
-		{"particle_radius", 0.1},
-		{"poly6_factor_coefficient1", 315.0},
-		{"poly6_factor_coefficient2", 64.0},
-		{"rho0", 1000},
-		{"spiky_grad_factor_coefficient", -45.0},
-		{"step_each_frame", 5},
-		{"time_delta_coefficient", 0.1}
-	};
-	fout << config << std::endl;
-	fout.close();
-	std::cout << config << std::endl;
-	ConstructFromJson(sph_host, config);
-#endif // OUTPUT_CONFIG
 
 	pos_init = sph_host->InitializePosition();
 	velo_init = sph_host->InitializeVelocity();
@@ -134,17 +88,32 @@ void initFluidSystem() {
 
 
 int main(int argc, char* argv[]) {
+	
+	// Initialize CUDA
+	std::cout << "Initializing CUDA..." << std::endl;
 
+	int device_cnt, device_num = 0;
+	checkCudaErrors(cudaGetDeviceCount(&device_cnt));
+	std::cout << "Total CUDA Device number found : " << device_cnt << std::endl;
+
+	checkCudaErrors(cudaSetDeviceFlags(cudaDeviceScheduleYield | cudaDeviceMapHost | cudaDeviceLmemResizeToMax));
+
+	std::cout << "Set Device Number: " << device_num << std::endl;
+	checkCudaErrors(cudaSetDevice(device_num));
+
+
+	// Initialize GLUT
 	std::cout << "Initializing GLUT..." << std::endl;
 	glutInit(&argc, argv);
 
-
+	// Initialize OpenGL
 	std::cout << "Initializing OpenGL..." << std::endl;
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH | GLUT_STENCIL);
 
-	glutInitWindowSize(res[0], res[1]);
+	//
+	glutInitWindowSize(kWindowSize[0], kWindowSize[1]);
 	glutInitWindowPosition(0, 0);
-	glutCreateWindow("CUDA SPH");
+	glutCreateWindow("CUDA WCSPH");
 
 	std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
 	std::cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl;
@@ -170,7 +139,7 @@ int main(int argc, char* argv[]) {
 	glutMainLoop();
 }
 
-void initScene(SPHSystem* sys) {
+void initScene(WCSPHSystem* sys) {
 
 	// init box
 	boxProgram.Init("shader/box.vs", "shader/box.fs");
@@ -308,7 +277,7 @@ void displayFunc() {
 
 	particleProgram.SetModelViewMatrix(m);
 	particleProgram.SetProjectionMatrix(p);
-	particleProgram.SetFloat("pointScale", res[1] / tanf(fov * 0.5f * float(M_PI) / 180.0f));
+	particleProgram.SetFloat("pointScale", kWindowSize[1] / tanf(fov * 0.5f * M_PI / 180.0f));
 	particleProgram.SetFloat("pointRadius", sph_host->particle_radius);
 	drawParticles();
 
@@ -476,173 +445,5 @@ void keyboardFunc(unsigned char key, int x, int y) {
 		oneFrame = true;
 		interrupt = false;
 		break;
-	}
-}
-
-void ConstructFromJsonFile(SPHSystem* sys, const char* filename) {
-	std::ifstream fin(filename);
-	json config;
-	fin >> config;
-	fin.close();
-	ConstructFromJson(sys, config);
-}
-
-void ConstructFromJson(SPHSystem* sys, json config) {
-	// SPH Parameters
-	{
-		auto tmp = config["dim"];
-		int x = int(tmp);
-		sys->dim = x;
-	}
-	{
-		auto tmp = config["particle_dim"];
-		int x = int(tmp[0]);
-		int y = int(tmp[1]);
-		int z = int(tmp[2]);
-		sys->particle_dim = make_int3(x, y, z);
-	}
-	sys->particle_num = sys->particle_dim.x * sys->particle_dim.y * sys->particle_dim.z;
-	{
-		auto tmp = config["particle_radius"];
-		float x = float(tmp);
-		sys->particle_radius = x;
-	}
-
-	// Device Parameters
-	{
-		auto tmp = config["block_dim"];
-		int x = int(tmp[0]);
-		int y = int(tmp[1]);
-		int z = int(tmp[2]);
-		sys->block_dim = make_int3(x, y, z);
-	}
-	sys->block_num = sys->block_dim.x * sys->block_dim.y * sys->block_dim.z;
-	sys->block_size = sys->box_size / sys->block_dim;
-	{
-		auto tmp = config["block_thread_num"];
-		int x = int(tmp);
-		sys->block_thread_num = x;
-	}
-
-	// Draw Parameters
-	{
-		auto tmp = config["step_each_frame"];
-		int x = int(tmp);
-		sys->step_each_frame = x;
-	}
-	{
-		auto tmp = config["box_size"];
-		float x = float(tmp[0]);
-		float y = float(tmp[1]);
-		float z = float(tmp[2]);
-		sys->box_size = make_float3(x, y, z);
-	}
-	{
-		auto tmp = config["box_margin_coefficient"];
-		float x = float(tmp[0]);
-		float y = float(tmp[1]);
-		float z = float(tmp[2]);
-		sys->box_margin = sys->box_size * make_float3(x, y, z);
-	}
-
-	// Function Parameters
-	{
-		auto tmp = config["rho0"];
-		float x = float(tmp);
-		sys->rho0 = x;  // reference density
-	}
-	{
-		auto tmp = config["gamma"];
-		float x = float(tmp);
-		sys->gamma = x;
-	}
-	{
-		auto tmp = config["h_coefficient"];
-		float x = float(tmp);
-		sys->h = sys->particle_radius * x;
-	}
-	{
-		auto tmp = config["gravity"];
-		auto tmp1 = config["gravity_coefficient"];
-		float x = float(tmp);
-		float y = float(tmp1);
-		sys->gravity = x * y;
-	}
-	{
-		auto tmp = config["alpha"];
-		float x = float(tmp);
-		sys->alpha = x;
-	}
-	{
-		auto tmp = config["C0"];
-		float x = float(tmp);
-		sys->C0 = x;
-	}
-	{
-		auto tmp = config["CFL_v"];
-		float x = float(tmp);
-		sys->CFL_v = x;
-	}
-	{
-		auto tmp = config["CFL_a"];
-		float x = float(tmp);
-		sys->CFL_a = x;
-	}
-	{
-		auto tmp = config["poly6_factor_coefficient1"];
-		auto tmp1 = config["poly6_factor_coefficient2"];
-		float x = float(tmp);
-		float y = float(tmp1);
-		sys->poly6_factor = x / y / M_PI;
-	}
-	{
-		auto tmp = config["spiky_grad_factor_coefficient"];
-		float x = float(tmp);
-		sys->spiky_grad_factor = x / M_PI;
-	}
-	{
-		float x = config["cubic_factor_coefficient1D1"];
-		float y = config["cubic_factor_coefficient1D2"];
-		sys->cubic_factor1D = x / y;
-	}
-	{
-		float x = config["cubic_factor_coefficient2D1"];
-		float y = config["cubic_factor_coefficient2D2"];
-		sys->cubic_factor2D = x / y;
-	}
-	{
-		float x = config["cubic_factor_coefficient3D1"];
-		float y = config["cubic_factor_coefficient3D2"];
-		sys->cubic_factor3D = x / y;
-	}
-	sys->mass = pow(sys->particle_radius, sys->dim) * sys->rho0;
-	{
-		auto tmp = config["time_delta_coefficient"];
-		float x = float(tmp);
-		sys->time_delta = x * sys->h / sys->C0;
-	}
-	{
-		auto tmp = config["velo_init_max"];
-		float x = float(tmp[0]);
-		float y = float(tmp[1]);
-		float z = float(tmp[2]);
-		sys->velo_init_max = make_float3(x, y, z);
-	}
-	{
-		auto tmp = config["velo_init_min"];
-		float x = float(tmp[0]);
-		float y = float(tmp[1]);
-		float z = float(tmp[2]);
-		sys->velo_init_min = make_float3(x, y, z);
-	}
-	{
-		auto tmp = config["eta"];
-		float x = float(tmp);
-		sys->eta = x;
-	}
-	{
-		auto tmp = config["f_air"];
-		float x = float(tmp);
-		sys->f_air = x;
 	}
 }
