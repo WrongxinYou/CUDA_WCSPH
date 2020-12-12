@@ -2,8 +2,7 @@
 #include "WCSPHSystem.h"
 #include "WCSPHSolver.cuh"
 #include "ShaderProgram.h"
-#include "handler.h"
-//#include "math_util.h"
+#include "utils/handler.h"
 
 #include <gl/GL.h>
 #include <cuda_gl_interop.h>

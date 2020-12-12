@@ -15,7 +15,7 @@ inline __device__ float cudaRandomFloat(curandState* state, int pid) {
 	return curand_uniform(&localState);
 }
 
-// Pressure update function
+// Pressure update function (Tait¡¯s equation)
 inline __HOSTDEV__ float PressureUpdate(float rho, float rho0, float C0, float gamma) {
 	// Weakly compressible, tait function
 	float b = rho0 * pow(C0, 2) / gamma;
@@ -75,27 +75,19 @@ inline __HOSTDEV__ double CubicSplineKernelDerivative(int dim, double dist, doub
 
 
 
-/// <summary>
-/// Init CUDA Device System
-/// </summary>
-/// <param name="para"></param>
-/// <param name="dens_init"></param>
-/// <param name="pos_init"></param>
-/// <param name="velo_init"></param>
+//
+// Init CUDA Device System
+//
 void InitDeviceSystem(WCSPHSystem* para, float* dens_init, float3* pos_init, float3* velo_init);
 
-/// <summary>
-/// Free CUDA Device System
-/// </summary>
-/// <param name="para"></param>
+//
+// Free CUDA Device System
+//
 void FreeDeviceSystem(WCSPHSystem* para);
 
-/// <summary>
-/// Get next frame information
-/// </summary>
-/// <param name="para"></param>
-/// <param name="position_resource"></param>
-/// <param name="color_resource"></param>
+//
+// Get next frame information
+//
 void getNextFrame(WCSPHSystem* sys, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource);
 
 #endif // !WCSPHSOLVER_CUH

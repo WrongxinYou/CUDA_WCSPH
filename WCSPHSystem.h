@@ -2,7 +2,7 @@
 #ifndef WCSPHSYSTEM_H
 #define WCSPHSYSTEM_H
 
-#include "math_util.h"
+#include "utils/math_util.h"
 
 class WCSPHSystem
 {

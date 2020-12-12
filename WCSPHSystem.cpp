@@ -1,7 +1,7 @@
 #include "WCSPHSystem.h"
 #include <fstream>
 #include <string.h>
-#include "json.hpp"
+#include "utils/json.hpp"
 using json = nlohmann::json;
 
 ////////////////////////////////////////////////////////////////////////////////
