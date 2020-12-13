@@ -13,11 +13,14 @@
 
 typedef enum { ROTATE, TRANSLATE, SCALE } CONTROL_STATE;
 
-const int kWindowSize[2] = { 512,512 };
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // Dispaly Settings
 ///////////////////////////////////////////////////////////////////////////////
+const int kWindowSize[2] = { 512, 512 };
+int screen_size[2] = { 0, 0 };
+int window_size[2] = { 0, 0 };
 
 int fov = 45;
 CONTROL_STATE controlState = TRANSLATE;
@@ -108,12 +111,19 @@ int main(int argc, char* argv[]) {
 	// Initialize OpenGL
 	std::cout << "Initializing OpenGL..." << std::endl;
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH | GLUT_STENCIL);
-
-	//
 	glutInitWindowSize(kWindowSize[0], kWindowSize[1]);
 	glutInitWindowPosition(0, 0);
 	glutCreateWindow("CUDA WCSPH");
 
+	screen_size[0] = glutGet(GLUT_SCREEN_WIDTH);
+	screen_size[1] = glutGet(GLUT_SCREEN_HEIGHT);
+	std::cout << "Screen Size: (" << screen_size[0] << " x " << screen_size[1] << ")" << std::endl;
+	window_size[0] = glutGet(GLUT_WINDOW_WIDTH);
+	window_size[1] = glutGet(GLUT_WINDOW_HEIGHT);
+	std::cout << "Window Size: (" << window_size[0] << " x " << window_size[1] << ")" << std::endl;
+	// make window center
+	glutPositionWindow((screen_size[0] - window_size[0]) / 2, (screen_size[1] - window_size[1]) / 2);
+	
 	std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
 	std::cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl;
 	std::cout << "Shading Language Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
