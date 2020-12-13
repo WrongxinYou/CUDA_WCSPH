@@ -16,10 +16,10 @@ inline __device__ float cudaRandomFloat(curandState* state, int pid) {
 }
 
 // Pressure update function (Tait¡¯s equation)
-inline __HOSTDEV__ float PressureUpdate(float rho, float rho0, float C0, float gamma) {
+inline __HOSTDEV__ float PressureUpdate(float rho, float rho_0, float C_s, float gamma) {
 	// Weakly compressible, tait function
-	float b = rho0 * pow(C0, 2) / gamma;
-	return b * (pow(rho / rho0, gamma) - 1.0);
+	float B = rho_0 * pow(C_s, 2) / gamma;
+	return B * (pow(rho / rho_0, gamma) - 1.0);
 }
 
 // SPH kernel function

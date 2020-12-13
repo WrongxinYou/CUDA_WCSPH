@@ -322,11 +322,14 @@ __global__ void ComputeDeltaValue(	WCSPHSystem* para,
 
 					//float pol_ker = Poly6Kernel(para->dim, len_ij, para->h, para->poly6_factor);
 					//float spi_ker = SpikyGradientKernel(para->dim, len_ij, para->h, para->spiky_grad_factor);
-					//float cub_ker = CubicSplineKernel(para->dim, len_ij, para->h, para->cubic_factor3D);
+					float cub_ker = CubicSplineKernel(para->dim, len_ij, para->h, para->cubic_factor3D);
 					float cub_ker_deri = CubicSplineKernelDerivative(para->dim, len_ij, para->h, para->cubic_factor3D);
 
-					// Density (Continuity equation)
-					delta_density[i] += para->mass * cub_ker_deri * dot((velocity[i] - velocity[j]), (vec_ij / len_ij));
+					// Density (Continuity equation, summation approach)
+					delta_density[i] += para->mass * cub_ker;
+
+					//// Density (Continuity equation, differential update)
+					//delta_density[i] += para->mass * cub_ker_deri * dot((velocity[i] - velocity[j]), (vec_ij / len_ij));
 
 					// Pressure (Momentum equation)
 					delta_pressure[i] -= para->mass * cub_ker_deri * (vec_ij / len_ij) *
@@ -335,9 +338,9 @@ __global__ void ComputeDeltaValue(	WCSPHSystem* para,
 					// Viscosity
 					float v_ij = dot(velocity[i] - velocity[j], vec_ij);
 					if (v_ij < 0) {
-						float v = -2.0 * para->alpha * para->particle_radius * para->C0 / fmaxf(M_EPS, density[i] + density[j]);
-						delta_viscosity[i] -= para->mass * cub_ker_deri * (vec_ij / len_ij) *
-							v_ij * v / fmaxf(M_EPS, pow(len_ij, 2) + 0.01 * pow(para->particle_radius, 2));
+						float viscous = -2.0 * para->alpha * para->particle_radius * para->C_s / fmaxf(M_EPS, density[i] + density[j]);
+						delta_viscosity[i] -= para->mass * cub_ker_deri * (vec_ij / len_ij) * 
+							viscous * v_ij / fmaxf(M_EPS, pow(len_ij, 2) + 0.01 * pow(para->particle_radius, 2));
 					}
 				}
 			}
@@ -345,6 +348,57 @@ __global__ void ComputeDeltaValue(	WCSPHSystem* para,
 		threadIdx_i += para->block_thread_num;
 	}
 }
+
+
+///// @brief 
+///// @param para 
+///// @param  
+///// @return 
+//__global__ void ComputeSurfaceTension(WCSPHSystem* para,
+//
+//
+//	) {
+//
+//	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
+//	int3 blockDim_i = para->block_dim;
+//	int threadIdx_i = threadIdx.x;
+//	int bid = GetBlockIdx1D(blockIdx_i, blockDim_i);
+//
+//	while (threadIdx_i < block_pnum[bid]) {
+//		// for each particle[i]
+//		int i = block_pidx[bid] + threadIdx_i;
+//		// Initialize
+//
+//		// for each block 
+//		for (int ii = 0; ii < 27; ii++) {
+//			int3 blockIdx_nei = blockIdx_i + make_int3(ii / 9 - 1, (ii % 9) / 3 - 1, ii % 3 - 1);
+//			if (BlockIdxIsValid(blockIdx_nei, blockDim_i)) {
+//				int bid_nei = GetBlockIdx1D(blockIdx_nei, blockDim_i);
+//				// find neighbour particle[j]
+//#pragma unroll
+//				for (int j = block_pidx[bid_nei]; j < block_pidx[bid_nei] + block_pnum[bid_nei]; j++) {
+//					if (i == j) continue;
+//					float3 vec_ij = cur_pos[i] - cur_pos[j];
+//					float len_ij = Norm2(vec_ij);
+//					len_ij = fmaxf(len_ij, M_EPS);
+//
+//					//float pol_ker = Poly6Kernel(para->dim, len_ij, para->h, para->poly6_factor);
+//					//float spi_ker = SpikyGradientKernel(para->dim, len_ij, para->h, para->spiky_grad_factor);
+//					float cub_ker = CubicSplineKernel(para->dim, len_ij, para->h, para->cubic_factor3D);
+//					float cub_ker_deri = CubicSplineKernelDerivative(para->dim, len_ij, para->h, para->cubic_factor3D);
+//
+//					// Density (Continuity equation, summation approach)
+//					delta_density[i] += para->mass * cub_ker;
+//
+//					delta_tension[i] -= para->kappa * kernel();
+//				}
+//			}
+//		}
+//		threadIdx_i += para->block_thread_num;
+//	}
+//
+//}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // 
@@ -369,6 +423,7 @@ __global__ void ComputeVelocity(	WCSPHSystem* para,
 		threadIdx_i += para->block_thread_num;
 	}
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -487,9 +542,12 @@ __global__ void UpdateParticles(	WCSPHSystem* para,
 
 		density[i] += para->time_delta * delta_density[i];
 
-		pressure[i] = PressureUpdate(density[i], para->rho0, para->C0, para->gamma);
+		pressure[i] = PressureUpdate(density[i], para->rho_0, para->C_s, para->gamma);
 
+#ifdef CONFINE_RANDOM
 		velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
+#endif // CONFINE_RANDOM
+
 		velocity[i] *= (1.0 - para->f_air); // air resistence
 
 		cur_pos[i] = next_pos[i];
@@ -509,17 +567,17 @@ __global__ void DebugOutput(		WCSPHSystem* para,
 									float* delta_density, float* density, float* pressure,
 									float3* cur_pos, float3* next_pos, float3* delta_pressure, float3* delta_viscocity, float3* delta_velocity, float3* velocity) {
 								
-	for (int i = 0; i < para->block_num; i++) {
-		printf("Block #%d:", i);
-		printf("     \n\t block ipdx: %d, block pnum: %d\n", block_pidx[i], block_pnum[i]);
-		printf("\n");
-	}
+	//for (int i = 0; i < para->block_num; i++) {
+	//	printf("Block #%d:", i);
+	//	printf("     \n\t block ipdx: %d, block pnum: %d\n", block_pidx[i], block_pnum[i]);
+	//	printf("\n");
+	//}
 
 	for (int i = 0; i < para->particle_num; i++) {
 		printf("Particle #%d:", i);
-		printf("     \n\t cur_pos (%f, %f, %f), next_pos (%f, %f, %f), particle_bid: %d\n", cur_pos[i].x, cur_pos[i].y, cur_pos[i].z, next_pos[i].x, next_pos[i].y, next_pos[i].z, particle_bid[i]);
-		printf("     \n\t delta_density (%f)\n\t delta_pressure (%f, %f, %f)\n\t delta_velocity (%f, %f, %f)\n", delta_density[i], delta_pressure[i].x, delta_pressure[i].y, delta_pressure[i].z, delta_velocity[i].x, delta_velocity[i].y, delta_velocity[i].z);
-		printf("     \n\t density (%f)\n\t pressure (%f)\n\t velocity (%f, %f, %f)\n", density[i], pressure[i], velocity[i].x, velocity[i].y, velocity[i].z);
+		printf("\n\t particle_bid: %d\n\t cur_pos (%f, %f, %f)\n\t next_pos (%f, %f, %f)\n", particle_bid[i], cur_pos[i].x, cur_pos[i].y, cur_pos[i].z, next_pos[i].x, next_pos[i].y, next_pos[i].z);
+		printf("\n\t delta_density (%f)\n\t delta_pressure (%f, %f, %f)\n\t delta_viscosity (%f, %f, %f)\n\t delta_velocity (%f, %f, %f)\n", delta_density[i], delta_pressure[i].x, delta_pressure[i].y, delta_pressure[i].z, delta_viscocity[i].x, delta_viscocity[i].y, delta_viscocity[i].z, delta_velocity[i].x, delta_velocity[i].y, delta_velocity[i].z);
+		printf("\n\t density (%f)\n\t pressure (%f)\n\t velocity (%f, %f, %f)\n", density[i], pressure[i], velocity[i].x, velocity[i].y, velocity[i].z);
 		printf("\n");
 	}
 }
@@ -553,7 +611,7 @@ __global__ void AdaptiveStep(		WCSPHSystem* para,
 
 	float dt_cfl = para->CFL_v * para->h / max_v;
 	float dt_f = para->CFL_a * sqrt(para->h / max_a);
-	float dt_a = 0.2 * para->h / (para->C0 * pow(sqrt(max_r / para->rho0), para->gamma));
+	float dt_a = 0.2 * para->h / (para->C_s * pow(sqrt(max_r / para->rho_0), para->gamma));
 
 	para->time_delta = fminf(dt_cfl, fminf(dt_f, dt_a));
 

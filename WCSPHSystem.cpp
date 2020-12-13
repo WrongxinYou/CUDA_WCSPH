@@ -32,12 +32,12 @@ WCSPHSystem::WCSPHSystem() {
 	block_thread_num = 256;
 
 	// Function Parameters
-	rho0 = 1000.0;  // reference density
+	rho_0 = 1000.0;  // reference density
 	gamma = 7.0;
 	h = 1.3 * particle_radius;
 	gravity = -9.8 * 30;
 	alpha = 0.3; // between 0.08 and 0.5
-	C0 = 200;
+	C_s = 200; // sqrt((2 * gravity * Height of particle + pow(initial velocity, 2)) / 0.01) 
 	CFL_v = 0.20;
 	CFL_a = 0.20;
 	poly6_factor = 315.0 / 64.0 / M_PI;
@@ -45,8 +45,8 @@ WCSPHSystem::WCSPHSystem() {
 	cubic_factor1D = 2.0 / 3.0 / M_PI;
 	cubic_factor2D = 10.0 / 7.0 / M_PI;
 	cubic_factor3D = 1.0 / M_PI;
-	mass = pow(particle_radius, dim) * rho0;
-	time_delta = 0.1 * h / C0;
+	mass = 4.0 / 3.0 * M_PI * rho_0 * pow(particle_radius, dim);
+	time_delta = 0.1 * h / C_s; // 0.4 * h / C_s
 	eta = 0.8; // confine boundary loss coefficient
 	f_air = 0.001; // air_resistance
 }
@@ -152,9 +152,9 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 
 	// Function Parameters
 	{
-		auto tmp = config["rho0"];
+		auto tmp = config["rho_0"];
 		float x = float(tmp);
-		sys->rho0 = x;  // reference density
+		sys->rho_0 = x;  // reference density
 	}
 	{
 		auto tmp = config["gamma"];
@@ -179,9 +179,9 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 		sys->alpha = x;
 	}
 	{
-		auto tmp = config["C0"];
+		auto tmp = config["C_s"];
 		float x = float(tmp);
-		sys->C0 = x;
+		sys->C_s = x;
 	}
 	{
 		auto tmp = config["CFL_v"];
@@ -220,11 +220,11 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 		float y = config["cubic_factor_coefficient3D2"];
 		sys->cubic_factor3D = x / y / M_PI;
 	}
-	sys->mass = pow(sys->particle_radius, sys->dim) * sys->rho0;
+	sys->mass = 4.0 / 3.0 * M_PI * sys->rho_0 * pow(sys->particle_radius, sys->dim);
 	{
 		auto tmp = config["time_delta_coefficient"];
 		float x = float(tmp);
-		sys->time_delta = x * sys->h / sys->C0;
+		sys->time_delta = x * sys->h / sys->C_s;
 	}
 	{
 		auto tmp = config["velo_init_max"];
@@ -261,7 +261,7 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 float* WCSPHSystem::InitializeDensity() {
 	float* dens_init = new float[particle_num];
 	for (int i = 0; i < particle_num; i++) {
-		dens_init[i] = rho0;
+		dens_init[i] = rho_0;
 	}
 	return dens_init;
 }

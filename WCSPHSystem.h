@@ -29,12 +29,12 @@ public:
 	int block_thread_num;		// thread number in each CUDA block
 
 	// Function Parameters
-	float rho0;					// reference density, initial density of each particle
-	float gamma;				// used in PressureUpdate and AdaptiveStep
-	float h;					// cutoff length, used to determine whether two particles will affect each other
+	float rho_0;				// initial density of each particle, used in PressureUpdate and InitializeDensity
+	float gamma;				// pow in Tait¡¯s equation, used in PressureUpdate and AdaptiveStep
+	float h;					// cutoff length, usually is radius, used to determine whether two particles will affect each other
 	float gravity;				// gravity of our system
-	float alpha;				// used in ComputeDeltaValue, for delta_viscosity computation, usually between 0.08 and 0.5
-	float C0;					// used in PressureUpdate and ComputeDeltaValue, for delta_viscosity computation as well as the time_delta computation
+	float alpha;				// viscosity constant in between 0.08 and 0.5, used in ComputeDeltaValue, for delta_viscosity computation
+	float C_s;					// speed of sound in the fluid, sqrt((2 * gravity * Height of particle + pow(initial velocity, 2)) / 0.01) 
 	float CFL_v;				// used in AdaptiveStep
 	float CFL_a;				// used in AdaptiveStep
 	float poly6_factor;			// used in Poly6Kernel
