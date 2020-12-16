@@ -31,7 +31,7 @@ WCSPHSystem::WCSPHSystem() {
 	// Draw Parameters
 	step_each_frame = 5;
 	box_length = make_float3(1.0, 1.0, 1.0);
-	box_margin = box_length * 0.1;
+	box_margin = 0.1 * box_length;
 
 	// Device Parameters
 	grid_dim = dim3(3, 3, 3);
@@ -62,11 +62,69 @@ WCSPHSystem::~WCSPHSystem() {}
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// construct function from config file
+// Construct function from config file
 // 
 ////////////////////////////////////////////////////////////////////////////////
 
-void ConstructFromJson(WCSPHSystem* sys, json config);
+float3 GetJsonVectorValue(const json& config, const char* name) {
+	auto tmp = config[name];
+	if (tmp.is_array()) {
+		return make_float3(tmp[0], tmp[1], tmp[2]);
+	}
+	else {
+		std::cerr << "GetJsonVectorValue ERROR! At " << name << std::endl;
+		return make_float3(-1, -1, -1);
+	}
+}
+
+void ConstructFromJson(WCSPHSystem* sys, json config) {
+
+	// WCSPH System Parameters
+	sys->dim = config["dim"].get<int>();
+	sys->particle_dim = make_int3(GetJsonVectorValue(config, "particle_dim"));
+	sys->particle_num = sys->particle_dim.x * sys->particle_dim.y * sys->particle_dim.z;
+	sys->eta = config["eta"].get<float>();
+	sys->f_air = config["f_air"].get<float>();
+	sys->gravity = config["gravity"].get<float>() * config["gravity_coefficient"].get<float>();
+
+	// Particles Parameters
+	sys->particle_radius = config["particle_radius"].get<float>();
+	sys->velo_init_min = GetJsonVectorValue(config, "velo_init_min");
+	sys->velo_init_max = GetJsonVectorValue(config, "velo_init_max");
+
+	// Draw Parameters
+	sys->step_each_frame = config["step_each_frame"].get<int>();
+	sys->box_length = GetJsonVectorValue(config, "box_length");
+	sys->box_margin = GetJsonVectorValue(config, "box_margin_coefficient") * sys->box_length;
+	sys->velo_draw_min = config["velo_draw_min"].get<float>();
+	sys->velo_draw_max = config["velo_draw_max"].get<float>();
+
+	// Device Parameters
+	sys->grid_dim = dim3(make_uint3(make_int3(GetJsonVectorValue(config, "grid_dim"))));
+	sys->grid_size = GetDimTotalSize(sys->grid_dim);
+	sys->block_length = sys->box_length / sys->grid_dim;
+	sys->block_size = config["block_size"].get<uint>();
+
+	// Function Parameters
+	sys->alpha = config["alpha"].get<float>();
+	sys->gamma = config["gamma"].get<float>();
+	sys->h = config["h_coefficient"].get<float>() * sys->particle_radius;
+	sys->rho_0 = config["rho_0"].get<float>();
+	sys->CFL_a = config["CFL_a"].get<float>();
+	sys->CFL_v = config["CFL_v"].get<float>();
+	sys->poly6_factor = config["poly6_factor_coefficient1"].get<float>() / config["poly6_factor_coefficient2"].get<float>() / M_PI;
+	sys->spiky_grad_factor = config["spiky_grad_factor_coefficient"].get<float>() / M_PI;
+	sys->vis_lapla_factor = config["vis_lapla_factor_coefficient"].get<float>() / M_PI;
+	sys->cubic_factor1D = config["cubic_factor_coefficient1D1"].get<float>() / config["cubic_factor_coefficient1D2"].get<float>() / M_PI;
+	sys->cubic_factor2D = config["cubic_factor_coefficient2D1"].get<float>() / config["cubic_factor_coefficient2D2"].get<float>() / M_PI;
+	sys->cubic_factor3D = config["cubic_factor_coefficient3D1"].get<float>() / config["cubic_factor_coefficient3D2"].get<float>() / M_PI;
+
+	// calculated para
+	sys->mass = 4.0 / 3.0 * M_PI * sys->rho_0 * pow(sys->particle_radius, sys->dim);
+	sys->C_s = sqrt((2 * fabs(sys->gravity) * sys->box_length.y + pow(sys->velo_init_min.y, 2)) / 0.01);
+	sys->time_delta = config["time_delta_coefficient"].get<float>() * sys->h / sys->C_s;
+
+}
 
 void ConstructFromJsonFile(WCSPHSystem* sys, const char* filename) {
 	std::ifstream fin(filename);
@@ -97,185 +155,11 @@ WCSPHSystem::WCSPHSystem(char* filename = "config/WCSPH_config.json") {
 	}
 }
 
-void ConstructFromJson(WCSPHSystem* sys, json config) {
-	// WCSPH System Parameters
-	{
-		auto tmp = config["dim"];
-		int x = int(tmp);
-		sys->dim = x;
-	}
-	{
-		auto tmp = config["particle_dim"];
-		int x = int(tmp[0]);
-		int y = int(tmp[1]);
-		int z = int(tmp[2]);
-		sys->particle_dim = make_int3(x, y, z);
-	}
-	sys->particle_num = sys->particle_dim.x * sys->particle_dim.y * sys->particle_dim.z;
-	{
-		auto tmp = config["eta"];
-		float x = float(tmp);
-		sys->eta = x;
-	}
-	{
-		auto tmp = config["f_air"];
-		float x = float(tmp);
-		sys->f_air = x;
-	}
-	{
-		auto tmp = config["gravity"];
-		auto tmp1 = config["gravity_coefficient"];
-		float x = float(tmp);
-		float y = float(tmp1);
-		sys->gravity = x * y;
-	}
-
-	// Particles Parameters
-	{
-		auto tmp = config["particle_radius"];
-		float x = float(tmp);
-		sys->particle_radius = x;
-	}
-	{
-		auto tmp = config["velo_init_min"];
-		float x = float(tmp[0]);
-		float y = float(tmp[1]);
-		float z = float(tmp[2]);
-		sys->velo_init_min = make_float3(x, y, z);
-	}
-	{
-		auto tmp = config["velo_init_max"];
-		float x = float(tmp[0]);
-		float y = float(tmp[1]);
-		float z = float(tmp[2]);
-		sys->velo_init_max = make_float3(x, y, z);
-	}
-
-	// Draw Parameters
-	{
-		auto tmp = config["step_each_frame"];
-		int x = int(tmp);
-		sys->step_each_frame = x;
-	}
-	{
-		auto tmp = config["box_length"];
-		float x = float(tmp[0]);
-		float y = float(tmp[1]);
-		float z = float(tmp[2]);
-		sys->box_length = make_float3(x, y, z);
-	}
-	{
-		auto tmp = config["box_margin_coefficient"];
-		float x = float(tmp[0]);
-		float y = float(tmp[1]);
-		float z = float(tmp[2]);
-		sys->box_margin = sys->box_length * make_float3(x, y, z);
-	}
-	{
-		auto tmp = config["velo_draw_min"];
-		float x = float(tmp);
-		sys->velo_draw_min = x;
-	}
-	{
-		auto tmp = config["velo_draw_max"];
-		float x = float(tmp);
-		sys->velo_draw_max = x;
-	}
-
-	// Device Parameters
-	{
-		auto tmp = config["grid_dim"];
-		int x = int(tmp[0]);
-		int y = int(tmp[1]);
-		int z = int(tmp[2]);
-		sys->grid_dim = dim3(x, y, z);
-	}
-	sys->grid_size = GetDimTotalSize(sys->grid_dim);
-	sys->block_length = sys->box_length / sys->grid_dim;
-	{
-		auto tmp = config["block_size"];
-		unsigned int x = int(tmp);
-		sys->block_size = x;
-	}
-
-	// Function Parameters
-	{
-		auto tmp = config["alpha"];
-		float x = float(tmp);
-		sys->alpha = x;
-	}
-	{
-		auto tmp = config["gamma"];
-		float x = float(tmp);
-		sys->gamma = x;
-	}
-	{
-		auto tmp = config["h_coefficient"];
-		float x = float(tmp);
-		sys->h = sys->particle_radius * x;
-	}
-	{
-		auto tmp = config["rho_0"];
-		float x = float(tmp);
-		sys->rho_0 = x;  // reference density
-	}
-	{
-		auto tmp = config["CFL_a"];
-		float x = float(tmp);
-		sys->CFL_a = x;
-	}
-	{
-		auto tmp = config["CFL_v"];
-		float x = float(tmp);
-		sys->CFL_v = x;
-	}
-	{
-		auto tmp = config["poly6_factor_coefficient1"];
-		auto tmp1 = config["poly6_factor_coefficient2"];
-		float x = float(tmp);
-		float y = float(tmp1);
-		sys->poly6_factor = x / y / M_PI;
-	}
-	{
-		auto tmp = config["spiky_grad_factor_coefficient"];
-		float x = float(tmp);
-		sys->spiky_grad_factor = x / M_PI;
-	}
-	{
-		auto tmp = config["vis_lapla_factor_coefficient"];
-		float x = float(tmp);
-		sys->vis_lapla_factor = x / M_PI;
-	}
-	{
-		float x = config["cubic_factor_coefficient1D1"];
-		float y = config["cubic_factor_coefficient1D2"];
-		sys->cubic_factor1D = x / y / M_PI;
-	}
-	{
-		float x = config["cubic_factor_coefficient2D1"];
-		float y = config["cubic_factor_coefficient2D2"];
-		sys->cubic_factor2D = x / y / M_PI;
-	}
-	{
-		float x = config["cubic_factor_coefficient3D1"];
-		float y = config["cubic_factor_coefficient3D2"];
-		sys->cubic_factor3D = x / y / M_PI;
-	}
-	// calculated para
-	sys->mass = 4.0 / 3.0 * M_PI * sys->rho_0 * pow(sys->particle_radius, sys->dim);
-	sys->C_s = sqrt((2 * fabs(sys->gravity) * sys->box_length.y + pow(sys->velo_init_min.y, 2)) / 0.01);
-	//{
-	//	auto tmp = config["C_s"];
-	//	float x = float(tmp);
-	//	sys->C_s = x;
-	//}
-	{
-		auto tmp = config["time_delta_coefficient"];
-		float x = float(tmp);
-		sys->time_delta = x * sys->h / sys->C_s;
-	}
-}
-
+////////////////////////////////////////////////////////////////////////////////
+//
+// Print settings to console
+// 
+////////////////////////////////////////////////////////////////////////////////
 void WCSPHSystem::Print() {
 	std::cout << "=============== WCSPH System Settings ================" << std::endl;
 	// WCSPH System Parameters

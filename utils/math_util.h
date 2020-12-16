@@ -41,6 +41,7 @@ inline __HOSTDEV__ bool operator < (const int3& A, const int3& B) { return (A.x 
 inline __HOSTDEV__ bool operator >= (const int3& A, const int3& B) { return (A.x >= B.x && A.y >= B.y && A.z >= B.z); }
 inline __HOSTDEV__ bool operator <= (const int3& A, const int3& B) { return (A.x <= B.x && A.y <= B.y && A.z <= B.z); }
 inline __HOSTDEV__ bool operator == (const int3& A, const int3& B) { return (A.x == B.x && A.y == B.y && A.z == B.z); }
+
 //template<typename T1>
 //inline __HOSTDEV__ bool operator > (const T1& A, const int3& B) { return (A.x > B.x && A.y > B.y && A.z > B.z); }
 //template<typename T1>

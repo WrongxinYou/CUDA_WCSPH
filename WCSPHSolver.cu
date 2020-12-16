@@ -728,7 +728,6 @@ void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cu
 	dim3 threads(para->block_size);
 
 	unsigned int num = para->particle_num;
-	unsigned int thread_num = para->block_size;
 
 	for (int i = 0; i < para->step_each_frame; i++) {
 
@@ -792,6 +791,7 @@ void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cu
 	cudaDeviceSynchronize();
 	
 #ifdef DYNAMIC_VELOCITY_MINMAX
+	unsigned int thread_num = para->block_size;
 	FindVelocityLenMinMax <<<1, threads, thread_num * sizeof(float)  >>> (thread_num, velocity_len, velo_min, num, true); // find min
 	cudaDeviceSynchronize();
 
