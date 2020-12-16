@@ -80,6 +80,10 @@ void ShaderProgram::SetFloat(const std::string& name, float value) {
 	glUniform1f(glGetUniformLocation(programHandle, name.c_str()), value);
 }
 
+void ShaderProgram::SetFloat3(const std::string& name, float3 value){
+	glUniform3f(glGetUniformLocation(programHandle, name.c_str()), value.x, value.y, value.z);
+}
+
 void ShaderProgram::CheckCompileErrors(GLuint handle, CheckType type) {
 	GLint success;
 	char infoLog[512];

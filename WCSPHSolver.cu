@@ -696,7 +696,7 @@ __global__ void ExportParticleInfo(	WCSPHSystem* para,
 	int bid = GetBlockIdx1D(blockIdx_i, blockDim_i);
 	while (threadIdx_i < block_pnum[bid]) {
 		int i = block_pidx[bid] + threadIdx_i;
-		pos_info[i] = cur_pos[i];
+		pos_info[i] = cur_pos[i] - para->box_length / 2;
 
 #ifdef DYNAMIC_VELOCITY_MINMAX
 		// use dynamic velocity min max, focus on relative velocity changing between particles

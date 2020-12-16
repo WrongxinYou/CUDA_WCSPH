@@ -1,6 +1,5 @@
 #version 120
 
-
 varying vec3 fs_PosEye;
 varying mat4 u_Persp;
 

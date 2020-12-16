@@ -5,6 +5,9 @@
 #include "utils/handler.h"
 
 #include <gl/GL.h>
+#include <glm/glm.hpp>
+#include <glm/common.hpp>
+#include <glm/gtx/rotate_vector.hpp>
 #include <cuda_gl_interop.h>
 #include <cuda_runtime.h>
 #include <time.h>
@@ -13,32 +16,31 @@
 
 typedef enum { ROTATE, TRANSLATE, SCALE } CONTROL_STATE;
 
-
-
 ///////////////////////////////////////////////////////////////////////////////
 // Dispaly Settings
 ///////////////////////////////////////////////////////////////////////////////
 const int kWindowSize[2] = { 768, 768 };
+
 int screen_size[2] = { 0, 0 };
 int window_size[2] = { 0, 0 };
 
 int fov = 45;
-CONTROL_STATE controlState = TRANSLATE;
-int mousePos[2];
-bool leftMouseButton = false;
-bool middleMouseButton = false;
-bool rightMouseButton = false;
+CONTROL_STATE control_state = TRANSLATE;
+int mouse_pos[2];
+bool left_mouse_button = false;
+bool middle_mouse_button = false;
+bool right_mouse_button = false;
 bool interrupt = false;
-bool oneFrame = true;
-long frameCnt = 0;
+bool is_one_frame = true;
+long frame_cnt = 0;
 
 // state of the world
-float landRotate[3] = { 0.0f, 0.0f, 0.0f };
-float landTranslate[3] = { 0.0f, 0.0f, 0.0f };
-float landScale[3] = { 1.0f, 1.0f, 1.0f };
+float land_rotate[3]	=	{ 0.00f, 0.50f, 0.50f };
+float land_translate[3] =	{ 0.00f, 0.00f, 0.00f };
+float land_scale[3]		=	{ 0.75f, 0.75f, 0.75f };
 
 // gl buffers
-ShaderProgram boxProgram, particleProgram;
+ShaderProgram box_program, particle_program;
 unsigned int box_vbo, box_ebo, box_vao;
 unsigned int position_vbo, color_vbo;
 
@@ -153,18 +155,18 @@ int main(int argc, char* argv[]) {
 void initScene(WCSPHSystem* sys) {
 
 	// init box
-	boxProgram.Init("shader/box.vs", "shader/box.fs");
-	boxProgram.Bind();
+	box_program.Init("shader/box.vs", "shader/box.fs");
+	box_program.Bind();
 
 	float box_vbo_data[] = {
-		0.0,		0.0,		0.0,
-		0.0,		box_length, 0.0,
-		box_length, box_length, 0.0,
-		box_length, 0.0,	    0.0,
-		0.0,		0.0,		box_length,
-		0.0,		box_length, box_length,
-		box_length, box_length, box_length,
-		box_length, 0.0,		box_length
+		0.0 - 0.5,			0.0 - 0.5,			0.0 - 0.5,
+		0.0 - 0.5,			box_length - 0.5,	0.0 - 0.5,
+		box_length - 0.5,	box_length - 0.5,	0.0 - 0.5,
+		box_length - 0.5,	0.0 - 0.5,			0.0 - 0.5,
+		0.0 - 0.5,			0.0 - 0.5,			box_length - 0.5,
+		0.0 - 0.5,			box_length - 0.5,	box_length - 0.5,
+		box_length - 0.5,	box_length - 0.5,	box_length - 0.5,
+		box_length - 0.5,	0.0 - 0.5,			box_length - 0.5
 	};
 
 	unsigned int box_ebo_data[] = {
@@ -211,7 +213,7 @@ void initScene(WCSPHSystem* sys) {
 
 	checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_color_resource, color_vbo, cudaGraphicsMapFlagsNone));
 
-	particleProgram.Init("shader/particle.vs", "shader/particle.fs");
+	particle_program.Init("shader/particle.vs", "shader/particle.fs");
 
 }
 
@@ -236,13 +238,13 @@ void drawParticles() {
 		return;
 
 #ifdef OUTPUT_FRAME_NUM
-	std::cout << "frame: " << frameCnt++ << std::endl;
+	std::cout << "Frame # " << frame_cnt++ << std::endl;
 #endif // OUTPUT_FRAME_NUM
 
 	// update color
 	getNextFrame(sph_host, cuda_position_resource, cuda_color_resource);
 
-	if (oneFrame) {
+	if (is_one_frame) {
 		interrupt = true;
 	}
 }
@@ -261,35 +263,46 @@ void displayFunc() {
 	float m[16];
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
-	glTranslatef(landTranslate[0], landTranslate[1], landTranslate[2]);
-	glRotatef(landRotate[0], 1.0, 0.0, 0.0);
-	glRotatef(landRotate[1], 0.0, 1.0, 0.0);
-	glRotatef(landRotate[2], 0.0, 0.0, 1.0);
-	glScalef(landScale[0], landScale[1], landScale[2]);
-	gluLookAt(1.6, 0.8, 2.3, 0.5, 0.5, 0.5, 0, 1, 0);
+
+	// intialize camera 
+	glm::vec3 camera_pos = glm::vec3(0, 0, 3);
+	glm::vec3 camera_look = glm::vec3(0, 0, 0);
+	glm::vec3 camera_up = glm::vec3(0, 1, 0);
+
+	camera_pos = glm::rotateX(camera_pos, land_rotate[0]);
+	camera_pos = glm::rotateY(camera_pos, land_rotate[1]);
+	//float dist = glm::distance(camera_pos, glm::vec3(0, 0, 0));
+	camera_pos = glm::vec3(camera_pos.x * land_scale[0], camera_pos.y * land_scale[0], camera_pos.z * land_scale[0]);
+
+	camera_up = glm::rotateX(camera_up, land_rotate[0]);
+	camera_up = glm::rotateY(camera_up, land_rotate[1]);
+
+	gluLookAt(camera_pos.x, camera_pos.y, camera_pos.z, 0, 0, 0, camera_up.x, camera_up.y, camera_up.z);
+	
 	glGetFloatv(GL_MODELVIEW_MATRIX, m);
 
 
 	// draw box
-	boxProgram.Bind();
-	boxProgram.SetModelViewMatrix(m);
-	boxProgram.SetProjectionMatrix(p);
+	box_program.Bind();
+	box_program.SetModelViewMatrix(m);
+	box_program.SetProjectionMatrix(p);
+	box_program.SetFloat3("box_length", sph_host->box_length);
 	glBindVertexArray(box_vao);
 	glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
 	glBindVertexArray(0);
 
 	// draw paricle
-	particleProgram.Bind();
+	particle_program.Bind();
 	glEnable(GL_POINT_SPRITE_ARB);
 	glTexEnvi(GL_POINT_SPRITE_ARB, GL_COORD_REPLACE_ARB, GL_TRUE);
 	glEnable(GL_VERTEX_PROGRAM_POINT_SIZE_NV);
 	glDepthMask(GL_TRUE);
 	glEnable(GL_DEPTH_TEST);
 
-	particleProgram.SetModelViewMatrix(m);
-	particleProgram.SetProjectionMatrix(p);
-	particleProgram.SetFloat("pointScale", kWindowSize[1] / tanf(fov * 0.5f * M_PI / 180.0f));
-	particleProgram.SetFloat("pointRadius", sph_host->particle_radius);
+	particle_program.SetModelViewMatrix(m);
+	particle_program.SetProjectionMatrix(p);
+	particle_program.SetFloat("pointScale", kWindowSize[1] / tanf(fov * 0.5f * M_PI / 180.0f));
+	particle_program.SetFloat("pointRadius", sph_host->particle_radius);
 	drawParticles();
 
 	glDisable(GL_POINT_SPRITE_ARB);
@@ -330,66 +343,70 @@ void mouseMotionDragFunc(int x, int y) {
 	// mouse has moved and one of the mouse buttons is pressed (dragging)
 
 	// the change in mouse position since the last invocation of this function
-	int mousePosDelta[2] = { x - mousePos[0], y - mousePos[1] };
+	int mousePosDelta[2] = { x - mouse_pos[0], y - mouse_pos[1] };
 
-	switch (controlState)
+	switch (control_state)
 	{
 		// translate the landscape
 	case TRANSLATE:
-		if (leftMouseButton)
-		{
-			// control x,y translation via the left mouse button
-			landTranslate[0] += mousePosDelta[0] * 0.01f;
-			landTranslate[1] -= mousePosDelta[1] * 0.01f;
-		}
-		if (rightMouseButton)
-		{
-			// control z translation via the right mouse button
-			landTranslate[2] += mousePosDelta[1] * 0.01f;
-		}
+		//if (left_mouse_button)
+		//{
+		//	// control x,y translation via the left mouse button
+		//	land_translate[0] += mousePosDelta[0] * 0.01f;
+		//	land_translate[1] -= mousePosDelta[1] * 0.01f;
+		//}
+		//if (right_mouse_button)
+		//{
+		//	// control z translation via the right mouse button
+		//	land_translate[2] += mousePosDelta[1] * 0.01f;
+		//}
 		break;
 
 		// rotate the landscape
 	case ROTATE:
-		if (leftMouseButton)
+		if (left_mouse_button)
 		{
 			// control x,y rotation via the left mouse button
-			landRotate[0] += mousePosDelta[1];
-			landRotate[1] += mousePosDelta[0];
+			/*land_rotate[0] += mousePosDelta[1];
+			land_rotate[1] += mousePosDelta[0];*/
+			land_rotate[1] -= mousePosDelta[0] / 100.0;
+			land_rotate[0] -= mousePosDelta[1] / 100.0;
 		}
-		if (rightMouseButton)
+		if (right_mouse_button)
 		{
 			// control z rotation via the right mouse button
-			landRotate[2] += mousePosDelta[1];
+			/*land_rotate[2] += mousePosDelta[1];*/
 		}
 		break;
 
 		// scale the landscape
 	case SCALE:
-		if (leftMouseButton)
+		if (left_mouse_button)
 		{
 			// control x,y scaling via the left mouse button
-			landScale[0] *= 1.0f + mousePosDelta[0] * 0.01f;
-			landScale[1] *= 1.0f - mousePosDelta[1] * 0.01f;
+			/*land_scale[0] *= 1.0f + mousePosDelta[0] * 0.01f;
+			land_scale[1] *= 1.0f - mousePosDelta[1] * 0.01f;*/
+			land_scale[0] *= 1.0 + mousePosDelta[1] * 0.01;
 		}
-		if (rightMouseButton)
+		if (right_mouse_button)
 		{
 			// control z scaling via the right mouse button
-			landScale[2] *= 1.0f - mousePosDelta[1] * 0.01f;
+			/*land_scale[2] *= 1.0f - mousePosDelta[1] * 0.01f;*/
+
 		}
 		break;
 	}
 
 	// store the new mouse position
-	mousePos[0] = x;
-	mousePos[1] = y;
+	mouse_pos[0] = x;
+	mouse_pos[1] = y;
 }
 
 void mouseMotionFunc(int x, int y) {
 	// mouse has moved
 	// store the new mouse position
-	mousePos[0] = x;
-	mousePos[1] = y;
+	mouse_pos[0] = x;
+	mouse_pos[1] = y;
 }
 
 void mouseButtonFunc(int button, int state, int x, int y) {
@@ -397,15 +414,15 @@ void mouseButtonFunc(int button, int state, int x, int y) {
 	switch (button)
 	{
 	case GLUT_LEFT_BUTTON:
-		leftMouseButton = (state == GLUT_DOWN);
+		left_mouse_button = (state == GLUT_DOWN);
 		break;
 
 	case GLUT_MIDDLE_BUTTON:
-		middleMouseButton = (state == GLUT_DOWN);
+		middle_mouse_button = (state == GLUT_DOWN);
 		break;
 
 	case GLUT_RIGHT_BUTTON:
-		rightMouseButton = (state == GLUT_DOWN);
+		right_mouse_button = (state == GLUT_DOWN);
 		break;
 	}
 
@@ -413,22 +430,22 @@ void mouseButtonFunc(int button, int state, int x, int y) {
 	switch (glutGetModifiers())
 	{
 	case GLUT_ACTIVE_CTRL:
-		controlState = TRANSLATE;
+		control_state = TRANSLATE;
 		break;
 
 	case GLUT_ACTIVE_SHIFT:
-		controlState = SCALE;
+		control_state = SCALE;
 		break;
 
 		// if CTRL and SHIFT are not pressed, we are in rotate mode
 	default:
-		controlState = ROTATE;
+		control_state = ROTATE;
 		break;
 	}
 
 	// store the new mouse position
-	mousePos[0] = x;
-	mousePos[1] = y;
+	mouse_pos[0] = x;
+	mouse_pos[1] = y;
 }
 
 void keyboardFunc(unsigned char key, int x, int y) {
@@ -448,12 +465,12 @@ void keyboardFunc(unsigned char key, int x, int y) {
 		break;
 
 	case 'p':
-		oneFrame = false;
+		is_one_frame = false;
 		interrupt = !interrupt;
 		break;
 
 	case 'f':
-		oneFrame = true;
+		is_one_frame = true;
 		interrupt = false;
 		break;
 	}

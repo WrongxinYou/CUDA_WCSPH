@@ -2,6 +2,7 @@
 #include <iostream>
 #include <GL/glew.h>
 #include <GL/freeglut.h>
+#include <vector_types.h>
 
 enum CheckType
 {
@@ -25,6 +26,7 @@ public:
 	void SetModelViewMatrix(const float* mv);
 	void SetProjectionMatrix(const float* p);
 	void SetFloat(const std::string& name, float value);
+	void ShaderProgram::SetFloat3(const std::string& name, float3 value);
 	void Bind();
 	GLuint GetProgrameHandle();
 
