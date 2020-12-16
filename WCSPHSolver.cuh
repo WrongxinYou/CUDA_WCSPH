@@ -3,8 +3,11 @@
 #define WCSPHSOLVER_CUH
 
 #include "WCSPHSystem.h"
-#include <device_launch_parameters.h>
+
+#include <cuda_runtime.h>
 #include <curand_kernel.h>
+#include <device_launch_parameters.h>
+#include <math.h>
 #include <time.h>
 
 // uniform random [0,1]
@@ -16,9 +19,9 @@ inline __device__ float cudaRandomFloat(curandState* state, int pid) {
 }
 
 // Pressure update function (Tait¡¯s equation)
-inline __HOSTDEV__ float PressureUpdate(float rho, float rho_0, float C_s, float gamma) {
+inline __HOSTDEV__ double PressureUpdate(double rho, double rho_0, double C_s, double gamma) {
 	// Weakly compressible, tait function
-	float B = rho_0 * pow(C_s, 2) / gamma;
+	double B = rho_0 * pow(C_s, 2) / gamma;
 	return B * (pow(rho / rho_0, gamma) - 1.0);
 }
 
@@ -26,9 +29,8 @@ inline __HOSTDEV__ float PressureUpdate(float rho, float rho_0, float C_s, float
 
 inline __HOSTDEV__ double SpikyGradientKernel(int dim, double dist, double cutoff, double spiky_grad_factor) {
 	double res = 0;
-	double x;
-	if (0 < dist && dist < cutoff) {
-		x = 1.0 - pow(dist / cutoff, 2);
+	if (dist <= cutoff) {
+		double x = 1.0 - pow(dist / cutoff, 2);
 		res = spiky_grad_factor * x / pow(cutoff, 4);
 	}
 	return res;
@@ -36,10 +38,18 @@ inline __HOSTDEV__ double SpikyGradientKernel(int dim, double dist, double cutof
 
 inline __HOSTDEV__ double Poly6Kernel(int dim, double dist, double cutoff, double poly6_factor) {
 	double res = 0;
-	double x;
-	if (0 < dist && dist < cutoff) {
-		x = 1.0 - pow(dist / cutoff, 2);
+	if (dist <= cutoff) {
+		double x = 1.0 - pow(dist / cutoff, 2);
 		res = poly6_factor * pow(x, 3) / pow(cutoff, 3);
+	}
+	return res;
+}
+
+inline __HOSTDEV__ double ViscosityKernelLaplacian(double dist, double cutoff, double vis_lapla_factor) {
+	double res = 0;
+	if (dist <= cutoff) {
+		double x = 1.0 - dist / cutoff;
+		res = vis_lapla_factor * x / pow(cutoff, 5);
 	}
 	return res;
 }
@@ -72,7 +82,19 @@ inline __HOSTDEV__ double CubicSplineKernelDerivative(int dim, double dist, doub
 	return res;
 }
 
-
+//
+// for FindVelocityLenMinMax use, min max function and warpReduce function
+//
+typedef float (*pfunc) (float, float);
+__device__ pfunc find_minmax[2] = { fmaxf, fminf };
+inline __device__ void FindMinMaxWarpReduce(unsigned int blockSize, volatile float* sdata, unsigned int tid, pfunc func) {
+	if (blockSize >= 64) sdata[tid] = func(sdata[tid], sdata[tid + 32]);
+	if (blockSize >= 32) sdata[tid] = func(sdata[tid], sdata[tid + 16]);
+	if (blockSize >= 16) sdata[tid] = func(sdata[tid], sdata[tid + 8]);
+	if (blockSize >= 8) sdata[tid] = func(sdata[tid], sdata[tid + 4]);
+	if (blockSize >= 4) sdata[tid] = func(sdata[tid], sdata[tid + 2]);
+	if (blockSize >= 2) sdata[tid] = func(sdata[tid], sdata[tid + 1]);
+}
 
 
 //

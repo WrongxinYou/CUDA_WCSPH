@@ -18,7 +18,7 @@ typedef enum { ROTATE, TRANSLATE, SCALE } CONTROL_STATE;
 ///////////////////////////////////////////////////////////////////////////////
 // Dispaly Settings
 ///////////////////////////////////////////////////////////////////////////////
-const int kWindowSize[2] = { 512, 512 };
+const int kWindowSize[2] = { 768, 768 };
 int screen_size[2] = { 0, 0 };
 int window_size[2] = { 0, 0 };
 
@@ -58,7 +58,7 @@ void keyboardFunc(unsigned char key, int x, int y);
 void initFluidSystem();
 
 // box and board
-float box_size = 1.0;
+float box_length = 1.0;
 float board_pos = 0.5f;
 
 
@@ -76,9 +76,11 @@ float* dens_init;
 void initFluidSystem() {
 	srand(time(0));
 
-	sph_host = new WCSPHSystem("WCSPH_config.json");
+	sph_host = new WCSPHSystem("config/WCSPH_config.json");
+	sph_host->Print();
+
 	int dim_max = ceil(3 / (4 * sph_host->h));
-	if (!(sph_host->block_dim <= make_int3(dim_max))) {
+	if (!(sph_host->grid_dim <= dim3(dim_max, dim_max, dim_max))) {
 		std::cout << "WARNING: block_dimension is too large, please decrease it" << std::endl;
 	}
 
@@ -155,14 +157,14 @@ void initScene(WCSPHSystem* sys) {
 	boxProgram.Bind();
 
 	float box_vbo_data[] = {
-		0.0,      0.0,      0.0,
-		0.0,      box_size, 0.0,
-		box_size, box_size, 0.0,
-		box_size, 0.0,	    0.0,
-		0.0,	  0.0,      box_size,
-		0.0,      box_size, box_size,
-		box_size, box_size, box_size,
-		box_size, 0.0,      box_size
+		0.0,		0.0,		0.0,
+		0.0,		box_length, 0.0,
+		box_length, box_length, 0.0,
+		box_length, 0.0,	    0.0,
+		0.0,		0.0,		box_length,
+		0.0,		box_length, box_length,
+		box_length, box_length, box_length,
+		box_length, 0.0,		box_length
 	};
 
 	unsigned int box_ebo_data[] = {

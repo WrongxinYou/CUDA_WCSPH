@@ -9,7 +9,7 @@
 // check cuda error
 #define checkCudaErrors(val) check_cuda( (val), #val, __FILE__, __LINE__ )
 inline void check_cuda(cudaError_t result, char const* const func, const char* const file, int const line) {
-	if (result) {
+	if (result != cudaSuccess) {
 		std::cerr << "CUDA ERROR = " << static_cast<unsigned int>(result) << " at " <<
 			file << ":" << line << " '" << func << "' \n";
 		std::cerr << cudaGetErrorString(result) << "\n";
