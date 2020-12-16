@@ -35,9 +35,9 @@ bool is_one_frame = true;
 long frame_cnt = 0;
 
 // state of the world
-float land_rotate[3]	=	{ 0.00f, 0.50f, 0.50f };
-float land_translate[3] =	{ 0.00f, 0.00f, 0.00f };
-float land_scale[3]		=	{ 0.75f, 0.75f, 0.75f };
+float land_rotate[3]	=	{ 0.0f, 0.5f, 0.5f };
+float land_translate[3] =	{ 0.0f, 0.0f, 0.0f };
+float land_scale[3]		=	{ 1.0f, 1.0f, 1.0f };
 
 // gl buffers
 ShaderProgram box_program, particle_program;
@@ -58,11 +58,7 @@ void keyboardFunc(unsigned char key, int x, int y);
 
 // construct function
 void initFluidSystem();
-
-// box and board
-float box_length = 1.0;
-float board_pos = 0.5f;
-
+float3 box_length;
 
 ////////////////////////////////////////////////////////////////////////////////
 // SPH Settings
@@ -157,16 +153,17 @@ void initScene(WCSPHSystem* sys) {
 	// init box
 	box_program.Init("shader/box.vs", "shader/box.fs");
 	box_program.Bind();
+	box_length = sys->box_length;
 
 	float box_vbo_data[] = {
-		0.0 - 0.5,			0.0 - 0.5,			0.0 - 0.5,
-		0.0 - 0.5,			box_length - 0.5,	0.0 - 0.5,
-		box_length - 0.5,	box_length - 0.5,	0.0 - 0.5,
-		box_length - 0.5,	0.0 - 0.5,			0.0 - 0.5,
-		0.0 - 0.5,			0.0 - 0.5,			box_length - 0.5,
-		0.0 - 0.5,			box_length - 0.5,	box_length - 0.5,
-		box_length - 0.5,	box_length - 0.5,	box_length - 0.5,
-		box_length - 0.5,	0.0 - 0.5,			box_length - 0.5
+		-box_length.x / 2,	-box_length.y / 2,	-box_length.z / 2,
+		-box_length.x / 2,	 box_length.y / 2 ,	-box_length.z / 2,
+		 box_length.x / 2,	 box_length.y / 2,	-box_length.z / 2,
+		 box_length.x / 2,	-box_length.y / 2,	-box_length.z / 2,
+		-box_length.x / 2,	-box_length.y / 2,	 box_length.z / 2,
+		-box_length.x / 2,	 box_length.y / 2,	 box_length.z / 2,
+		 box_length.x / 2,	 box_length.y / 2,	 box_length.z / 2,
+		 box_length.x / 2,	-box_length.y / 2,	 box_length.z / 2
 	};
 
 	unsigned int box_ebo_data[] = {
@@ -265,7 +262,7 @@ void displayFunc() {
 	glLoadIdentity();
 
 	// intialize camera 
-	glm::vec3 camera_pos = glm::vec3(0, 0, 3);
+	glm::vec3 camera_pos = glm::vec3(0, 0, box_length.z * 2.2);
 	glm::vec3 camera_look = glm::vec3(0, 0, 0);
 	glm::vec3 camera_up = glm::vec3(0, 1, 0);
 

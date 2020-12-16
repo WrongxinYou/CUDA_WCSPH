@@ -5,6 +5,8 @@
 *.cubin
 *.fatbin
 
+.vs/
+bin/
 
 *.exe
 *.exp
