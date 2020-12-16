@@ -86,7 +86,6 @@ inline __HOSTDEV__ bool BlockIdxIsValid(dim3 block_idx, const dim3 grid_dim) { r
 inline __HOSTDEV__ bool BlockIdxIsValid(int3 block_idx, const int3 grid_dim) { return (make_int3(0, 0, 0) <= block_idx && block_idx < grid_dim); }
 
 inline __HOSTDEV__ float NormalizeTo01(float x, float x_min, float x_max) {
-	x_min = 0; x_max = 20;
 	x = min(x, x_max);
 	return (x - x_min) / (x_max - x_min + M_EPS);
 }

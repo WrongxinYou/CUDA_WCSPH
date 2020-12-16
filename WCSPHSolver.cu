@@ -8,6 +8,7 @@
 //#define CONFINE_RANDOM
 #define CUDA_MEMCPY_ASYNC
 #define CUDA_MEMSET_ASYNC
+//#define DYNAMIC_VELOCITY_MINMAX
 
 const int kCudaSortArrayCount = 4;
 
@@ -224,8 +225,6 @@ __global__ void ComputeBid(			WCSPHSystem* para,
 		particle_bid[i] = GetBlockIdx1D(bidx, para->grid_dim);
 		i += GetDimTotalSize(gridDim) * GetDimTotalSize(blockDim); // gridSize * blockSize
 	}
-
-
 
 #ifdef DEBUG
 	if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0)
@@ -549,7 +548,6 @@ __global__ void UpdateParticles(	WCSPHSystem* para,
 		int i = block_pidx[bid] + threadIdx_i;
 
 		density[i] += para->time_delta * delta_density[i];
-
 		pressure[i] = PressureUpdate(density[i], para->rho_0, para->C_s, para->gamma);
 
 #ifdef CONFINE_RANDOM
@@ -557,7 +555,6 @@ __global__ void UpdateParticles(	WCSPHSystem* para,
 #endif // CONFINE_RANDOM
 
 		velocity[i] *= (1.0 - para->f_air); // air resistence
-
 		velocity_len[i] = Norm2(velocity[i]);
 
 		cur_pos[i] = next_pos[i];
@@ -667,7 +664,9 @@ __global__ void FindVelocityLenMinMax(unsigned int blockSize, float* velocity_le
 	if (blockSize >= 128) { if (tid <  64) { sdata[tid] = func(sdata[tid], sdata[tid +  64]); } __syncthreads(); }
 	if (tid < 32) { FindMinMaxWarpReduce(blockSize, sdata, tid, func); }
 	if (tid == 0) { g_odata[blockIdx.x] = sdata[0]; }
-	if (tid == 0) { printf("velocity_max: %f\n", g_odata[blockIdx.x]); }
+#ifdef DEBUG
+	if (tid == 0) { printf("velocity_%s: %f\n", findmin ? "min" : "max", g_odata[blockIdx.x]); }
+#endif // DEBUG
 
 #ifdef DEBUG
 	if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0)
@@ -698,8 +697,14 @@ __global__ void ExportParticleInfo(	WCSPHSystem* para,
 	while (threadIdx_i < block_pnum[bid]) {
 		int i = block_pidx[bid] + threadIdx_i;
 		pos_info[i] = cur_pos[i];
+
+#ifdef DYNAMIC_VELOCITY_MINMAX
+		// use dynamic velocity min max, focus on relative velocity changing between particles
+		float percent = NormalizeTo01(velocity_len[i], *velo_min, *velo_max);
+#else
+		// use set velocity min max, focus on overall velocity changing between different systems
 		float percent = NormalizeTo01(velocity_len[i], para->velo_draw_min, para->velo_draw_max);
-		//float percent = NormalizeTo01(velocity_len[i], *velo_min, *velo_max);
+#endif
 		color_info[i] = make_float3(percent, percent, 1.0);
 		threadIdx_i += para->block_size;
 	}
@@ -775,11 +780,6 @@ void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cu
 		cudaDeviceSynchronize();
 	}
 
-	//FindVelocityLenMinMax <<<1, threads, thread_num * sizeof(float)  >>> (thread_num, velocity_len, velo_min, num, true); // find min
-	//cudaDeviceSynchronize();
-
-	//FindVelocityLenMinMax <<<1, threads, thread_num * sizeof(float)  >>> (thread_num, velocity_len, velo_max, num, false); // find max
-	//cudaDeviceSynchronize();
 
 	float3* pos_info;
 	float3* color_info;
@@ -791,8 +791,19 @@ void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cu
 	checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&color_info, &cbytes, color_resource));
 	cudaDeviceSynchronize();
 	
+#ifdef DYNAMIC_VELOCITY_MINMAX
+	FindVelocityLenMinMax <<<1, threads, thread_num * sizeof(float)  >>> (thread_num, velocity_len, velo_min, num, true); // find min
+	cudaDeviceSynchronize();
+
+	FindVelocityLenMinMax <<<1, threads, thread_num * sizeof(float)  >>> (thread_num, velocity_len, velo_max, num, false); // find max
+	cudaDeviceSynchronize();
+	
 	ExportParticleInfo <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, velocity_len, velo_min, velo_max, cur_pos, pos_info, color_info);
 	cudaDeviceSynchronize();
+#else
+	ExportParticleInfo <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, velocity_len, velo_min, velo_max, cur_pos, pos_info, color_info);
+	cudaDeviceSynchronize();
+#endif // DYNAMIC_VELOCITY_MINMAX
 	
 	checkCudaErrors(cudaGraphicsUnmapResources(1, &position_resource));
 	checkCudaErrors(cudaGraphicsUnmapResources(1, &color_resource));

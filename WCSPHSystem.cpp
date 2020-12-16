@@ -277,7 +277,7 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 }
 
 void WCSPHSystem::Print() {
-	std::cout << "WCSPH System settings are listed below: " << std::endl;
+	std::cout << "=============== WCSPH System Settings ================" << std::endl;
 	// WCSPH System Parameters
 	std::cout << "WCSPH System Parameters" << std::endl;
 	std::cout << "\t config_filename: " << config_filename << std::endl;
@@ -327,6 +327,8 @@ void WCSPHSystem::Print() {
 	std::cout << "\t cubic_factor2D: " << cubic_factor2D << std::endl;
 	std::cout << "\t cubic_factor3D: " << cubic_factor3D << std::endl;
 	std::cout << "\t time_delta: " << time_delta << std::endl;
+	
+	std::cout << "======================= END ==========================" << std::endl;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
