@@ -4,8 +4,10 @@
 
 #include "WCSPHSystem.h"
 
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
+#include <device_functions.h>
 #include <device_launch_parameters.h>
 #include <math.h>
 #include <time.h>
@@ -86,7 +88,7 @@ inline __HOSTDEV__ double CubicSplineKernelDerivative(int dim, double dist, doub
 // for FindVelocityLenMinMax use, min max function and warpReduce function
 //
 typedef float (*pfunc) (float, float);
-__device__ pfunc find_minmax[2] = { fmaxf, fminf };
+static __device__ pfunc find_minmax[2] = { fmaxf, fminf };
 inline __device__ void FindMinMaxWarpReduce(unsigned int blockSize, volatile float* sdata, unsigned int tid, pfunc func) {
 	if (blockSize >= 64) sdata[tid] = func(sdata[tid], sdata[tid + 32]);
 	if (blockSize >= 32) sdata[tid] = func(sdata[tid], sdata[tid + 16]);

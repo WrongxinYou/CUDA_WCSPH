@@ -1,6 +1,7 @@
 #include "WCSPHSolver.cuh"
 #include "utils/handler.h"
 
+#include <helper_math.h>
 #include <thrust/sort.h>
 #include <thrust/execution_policy.h>
 
@@ -23,9 +24,8 @@ const int kCudaMemcpyTime = 7;
 
 WCSPHSystem* sph_device = NULL;
 
-int* particle_bid = NULL; // each particle belongs to which block
-int* block_pidx = NULL; // first particle index in grid
-int* block_pnum = NULL; // particle number in grid
+int* particle_zidx = NULL;	// each particle belongs to which zone
+int* zone_pidx = NULL;		// first particle index in one zone
 
 curandState* devStates = NULL;
 
@@ -76,10 +76,9 @@ void InitDeviceSystem(WCSPHSystem* para, float* dens_init, float3* pos_init, flo
 #endif // CUDA_MEMCPY_ASYNC
 	
 
-	checkCudaErrors(cudaMalloc((void**)&particle_bid, kCudaSortArrayCount * num * sizeof(int)));
+	checkCudaErrors(cudaMalloc((void**)&particle_zidx, kCudaSortArrayCount * num * sizeof(int)));
 
-	checkCudaErrors(cudaMalloc((void**)&block_pidx, para->grid_size * sizeof(int)));
-	checkCudaErrors(cudaMalloc((void**)&block_pnum, para->grid_size * sizeof(int)));
+	checkCudaErrors(cudaMalloc((void**)&zone_pidx, (para->zone_size + 1) * sizeof(int)));
 
 
 	checkCudaErrors(cudaMalloc((void**)&devStates, num * sizeof(curandState)));
@@ -167,9 +166,8 @@ void FreeDeviceSystem(WCSPHSystem* para) {
 
 	checkCudaErrors(cudaFree(sph_device));
 
-	checkCudaErrors(cudaFree(particle_bid));
-	checkCudaErrors(cudaFree(block_pidx));
-	checkCudaErrors(cudaFree(block_pnum));
+	checkCudaErrors(cudaFree(particle_zidx));
+	checkCudaErrors(cudaFree(zone_pidx));
 
 	checkCudaErrors(cudaFree(devStates));
 
@@ -205,11 +203,11 @@ void FreeDeviceSystem(WCSPHSystem* para) {
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Compute which block each particle belongs to
+// Compute which zone each particle belongs to
 //
 ////////////////////////////////////////////////////////////////////////////////
-__global__ void ComputeBid(			WCSPHSystem* para,
-									int* particle_bid,
+__global__ void ComputeZoneIdx(		WCSPHSystem* para,
+									int* particle_zidx, int* zone_pidx,
 									float3* cur_pos) {
 
 #ifdef DEBUG
@@ -217,12 +215,13 @@ __global__ void ComputeBid(			WCSPHSystem* para,
 		printf("Block #(%d,%d,%d) Do ComputeBid\n", blockIdx.x, blockIdx.y, blockIdx.z);
 #endif // DEBUG
 
-	// compute block_id for each particle
-	int i = GetBlockIdx1D(blockIdx, gridDim) * GetDimTotalSize(blockDim) + threadIdx.x;
+	// compute zone_idx for each particle i
+	int i = MapIndex3DTo1D(blockIdx, gridDim) * GetDimTotalSize(blockDim) + threadIdx.x;
 	while (i < para->particle_num) {
-		// compute particle position inside which bidx block
-		int3 bidx = make_int3(cur_pos[i] / para->block_length);
-		particle_bid[i] = GetBlockIdx1D(bidx, para->grid_dim);
+		// compute particle position inside which zidx zone
+		int3 zidx = make_int3(cur_pos[i] / para->zone_length);
+		particle_zidx[i] = MapIndex3DTo1D(zidx, para->zone_dim);
+		atomicAdd(&zone_pidx[particle_zidx[i]], 1);
 		i += GetDimTotalSize(gridDim) * GetDimTotalSize(blockDim); // gridSize * blockSize
 	}
 
@@ -235,11 +234,11 @@ __global__ void ComputeBid(			WCSPHSystem* para,
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Use Radix sort to place particle in block order
+// Use Radix sort to place particle in zone order
 //
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void SortParticles(		WCSPHSystem* para,
-									int* particle_bid,
+									int* particle_zidx, int* zone_pidx,
 									float* density, float* pressure,
 									float3* cur_pos, float3* velocity) {
 
@@ -249,20 +248,20 @@ __global__ void SortParticles(		WCSPHSystem* para,
 #endif // DEBUG
 
 	int num = para->particle_num;
-	if (blockIdx.x == 0) {
-		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 0, particle_bid + num * 1, cur_pos);
+	if (threadIdx.x == 0) {
+		thrust::stable_sort_by_key(thrust::device, particle_zidx + num * 0, particle_zidx + num * 1, cur_pos);
 	}
-	else if (blockIdx.x == 1) {
-		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 1, particle_bid + num * 2, density);
+	else if (threadIdx.x == 1) {
+		thrust::stable_sort_by_key(thrust::device, particle_zidx + num * 1, particle_zidx + num * 2, density);
 	}
-	else if (blockIdx.x == 2) {
-		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 2, particle_bid + num * 3, pressure);
+	else if (threadIdx.x == 2) {
+		thrust::stable_sort_by_key(thrust::device, particle_zidx + num * 2, particle_zidx + num * 3, pressure);
 	}
-	else if (blockIdx.x == 3) {
-		thrust::stable_sort_by_key(thrust::device, particle_bid + num * 3, particle_bid + num * 4, velocity);
+	else if (threadIdx.x == 3) {
+		thrust::stable_sort_by_key(thrust::device, particle_zidx + num * 3, particle_zidx + num * 4, velocity);
 	}
-	//else if (blockIdx.x == 4) {
-	//	thrust::stable_sort_by_key(thrust::device, particle_bid + num * 4, particle_bid + num * 5, next_pos);
+	//else if (threadIdx.x == 4) {
+	//	thrust::stable_sort_by_key(thrust::device, particle_zidx + num * 4, particle_zidx + num * 5, next_pos);
 	//}
 
 #ifdef DEBUG
@@ -274,45 +273,11 @@ __global__ void SortParticles(		WCSPHSystem* para,
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Compute the index of first particle and the total particle number in each block 
-//
-////////////////////////////////////////////////////////////////////////////////
-__global__ void ComputeBlockIdxPnum(WCSPHSystem* para,
-									int* particle_bid, int* block_pidx, int* block_pnum) {
-
-#ifdef DEBUG
-	if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0)
-		printf("Block #(%d,%d,%d) Do ComputeBlockIdxPnum\n", blockIdx.x, blockIdx.y, blockIdx.z);
-#endif // DEBUG
-
-	for (int i = 0; i < para->grid_size; i++) {
-		block_pidx[i] = -1;
-		block_pnum[i] = 0;
-	}
-
-	for (int i = 0; i < para->particle_num; i++) {
-		if (i == 0 || particle_bid[i] != particle_bid[i - 1]) {
-			block_pidx[particle_bid[i]] = i;
-		}
-		block_pnum[particle_bid[i]]++;
-		//if (block_pnum[particle_bid[i]] > para->block_size)
-		//	printf("Block %d ERROR, exceed threads number\n", particle_bid[i]);
-	}
-
-#ifdef DEBUG
-	if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0)
-		printf("Block #(%d,%d,%d) Finish ComputeBlockIdxPnum\n", blockIdx.x, blockIdx.y, blockIdx.z);
-#endif // DEBUG
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-//
 // Compute delta value of density, pressure and viscosity for each particle
 //
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void ComputeDeltaValue(	WCSPHSystem* para,
-									int* block_pidx, int* block_pnum,
+									int* zone_pidx,
 									float* delta_density, float* density,  float* pressure,
 									float3* cur_pos, float3* delta_pressure, float3* delta_viscosity, float3* velocity) {
 
@@ -321,58 +286,52 @@ __global__ void ComputeDeltaValue(	WCSPHSystem* para,
 		printf("Block #(%d,%d,%d) Do ComputeDeltaValue\n", blockIdx.x, blockIdx.y, blockIdx.z);
 #endif // DEBUG
 
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = make_int3(para->grid_dim);
-	int threadIdx_i = threadIdx.x;
-	int bid = GetBlockIdx1D(blockIdx_i, blockDim_i);
-
-	while (threadIdx_i < block_pnum[bid]) {
-		// for each particle[i]
-		int i = block_pidx[bid] + threadIdx_i;
+	// for each particle[i]
+	int i = MapIndex3DTo1D(blockIdx, gridDim) * GetDimTotalSize(blockDim) + threadIdx.x;
+	while (i < para->particle_num) {
+		int3 zidx = make_int3(cur_pos[i] / para->zone_length);
 		// Initialize
 		delta_density[i] = 0.0;
 		delta_pressure[i] = make_float3(0, 0, 0);
 		delta_viscosity[i] = make_float3(0, 0, 0);
-
-		// for each block 
+		// for each neighbor zone
 		for (int ii = 0; ii < 27; ii++) {
-			int3 blockIdx_nei = blockIdx_i + make_int3(ii / 9 - 1, (ii % 9) / 3 - 1, ii % 3 - 1);
-			if (BlockIdxIsValid(blockIdx_nei, blockDim_i)) {
-				int bid_nei = GetBlockIdx1D(blockIdx_nei, blockDim_i);
-				// find neighbour particle[j]
+			int3 zidx_neighb = zidx + make_int3(ii / 9 - 1, (ii % 9) / 3 - 1, ii % 3 - 1); // neighbor zone index
+			int zidx_neighb1D = MapIndex3DTo1D(zidx_neighb, para->zone_dim);
+			if (zidx_neighb1D < 0) continue; // index not valid
+			// find neighbour particle[j]
 #pragma unroll
-				for (int j = block_pidx[bid_nei]; j < block_pidx[bid_nei] + block_pnum[bid_nei]; j++) {
-					if (i == j) continue;
-					float3 vec_ij = cur_pos[i] - cur_pos[j];
-					float len_ij = Norm2(vec_ij);
-					len_ij = fmaxf(len_ij, M_EPS);
+			for (int j = zone_pidx[zidx_neighb1D]; j < zone_pidx[zidx_neighb1D + 1]; j++) {
+				if (i == j) continue;
+				float3 vec_ij = cur_pos[i] - cur_pos[j];
+				float len_ij = Norm2(vec_ij);
+				len_ij = fmaxf(len_ij, M_EPS);
 
-					//float pol_ker = Poly6Kernel(para->dim, len_ij, para->h, para->poly6_factor);
-					//float spi_ker = SpikyGradientKernel(para->dim, len_ij, para->h, para->spiky_grad_factor);
-					float cub_ker = CubicSplineKernel(para->dim, len_ij, para->h, para->cubic_factor3D);
-					float cub_ker_deri = CubicSplineKernelDerivative(para->dim, len_ij, para->h, para->cubic_factor3D);
+				//float pol_ker = Poly6Kernel(para->dim, len_ij, para->h, para->poly6_factor);
+				//float spi_ker = SpikyGradientKernel(para->dim, len_ij, para->h, para->spiky_grad_factor);
+				float cub_ker = CubicSplineKernel(para->dim, len_ij, para->h, para->cubic_factor3D);
+				float cub_ker_deri = CubicSplineKernelDerivative(para->dim, len_ij, para->h, para->cubic_factor3D);
 
-					// Density (Continuity equation, summation approach)
-					delta_density[i] += para->mass * cub_ker;
+				// Density (Continuity equation, summation approach)
+				delta_density[i] += para->mass * cub_ker;
 
-					//// Density (Continuity equation, differential update)
-					//delta_density[i] += para->mass * cub_ker_deri * dot((velocity[i] - velocity[j]), (vec_ij / len_ij));
+				//// Density (Continuity equation, differential update)
+				//delta_density[i] += para->mass * cub_ker_deri * dot((velocity[i] - velocity[j]), (vec_ij / len_ij));
 
-					// Pressure (Momentum equation)
-					delta_pressure[i] -= para->mass * cub_ker_deri * (vec_ij / len_ij) *
-						(pressure[i] / fmaxf(M_EPS, pow(density[i], 2)) + pressure[j] / fmaxf(M_EPS, pow(density[j], 2)));
+				// Pressure (Momentum equation)
+				delta_pressure[i] -= para->mass * cub_ker_deri * (vec_ij / len_ij) *
+					(pressure[i] / fmaxf(M_EPS, pow(density[i], 2)) + pressure[j] / fmaxf(M_EPS, pow(density[j], 2)));
 
-					// Viscosity
-					float v_ij = dot(velocity[i] - velocity[j], vec_ij);
-					if (v_ij < 0) {
-						float viscous = -2.0 * para->alpha * para->h * para->C_s / fmaxf(M_EPS, density[i] + density[j]);
-						delta_viscosity[i] -= para->mass * cub_ker_deri * (vec_ij / len_ij) * 
-							viscous * v_ij / fmaxf(M_EPS, pow(len_ij, 2) + 0.01 * pow(para->h, 2));
-					}
+				// Viscosity
+				float v_ij = dot(velocity[i] - velocity[j], vec_ij);
+				if (v_ij < 0) {
+					float viscous = -2.0 * para->alpha * para->h * para->C_s / fmaxf(M_EPS, density[i] + density[j]);
+					delta_viscosity[i] -= para->mass * cub_ker_deri * (vec_ij / len_ij) *
+						viscous * v_ij / fmaxf(M_EPS, pow(len_ij, 2) + 0.01 * pow(para->h, 2));
 				}
 			}
 		}
-		threadIdx_i += para->block_size;
+		i += GetDimTotalSize(gridDim) * GetDimTotalSize(blockDim); // gridSize * blockSize
 	}
 
 #ifdef DEBUG
@@ -388,8 +347,6 @@ __global__ void ComputeDeltaValue(	WCSPHSystem* para,
 // 
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void ComputeVelocity(	WCSPHSystem* para,
-									int* block_pidx, int* block_pnum,
-									float* density,
 									float3* cur_pos, float3* delta_pressure, float3* delta_viscosity, float3* delta_velocity, float3* velocity) {
 
 #ifdef DEBUG
@@ -397,17 +354,17 @@ __global__ void ComputeVelocity(	WCSPHSystem* para,
 		printf("Block #(%d,%d,%d) Do ComputeVelocity\n", blockIdx.x, blockIdx.y, blockIdx.z);
 #endif // DEBUG
 
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = make_int3(para->grid_dim);
-	int threadIdx_i = threadIdx.x;
-	int bid = GetBlockIdx1D(blockIdx_i, blockDim_i);
-	while (threadIdx_i < block_pnum[bid]) {
-		int i = block_pidx[bid] + threadIdx_i; // for each particle[i]
+	// for each particle[i]
+	int i = MapIndex3DTo1D(blockIdx, gridDim) * GetDimTotalSize(blockDim) + threadIdx.x;
+	while (i < para->particle_num) {
 		float3 G = make_float3(0, para->gravity, 0);
 		// velocity (Momentum equation)
+		/*if (Norm2(delta_pressure[i]) > 2000)
+			delta_pressure[i] = delta_pressure[i] / Norm2(delta_pressure[i]) * 2000;*/
 		delta_velocity[i] = delta_pressure[i] + delta_viscosity[i] + G;
 		velocity[i] += para->time_delta * delta_velocity[i];
-		threadIdx_i += para->block_size;
+
+		i += GetDimTotalSize(gridDim) * GetDimTotalSize(blockDim); // gridSize * blockSize
 	}
 
 #ifdef DEBUG
@@ -423,7 +380,6 @@ __global__ void ComputeVelocity(	WCSPHSystem* para,
 //
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void ComputePosition(	WCSPHSystem* para,
-									int* block_pidx, int* block_pnum,
 									float3* cur_pos, float3* next_pos, float3* velocity) {
 
 #ifdef DEBUG
@@ -431,14 +387,12 @@ __global__ void ComputePosition(	WCSPHSystem* para,
 		printf("Block #(%d,%d,%d) Do ComputePosition\n", blockIdx.x, blockIdx.y, blockIdx.z);
 #endif // DEBUG
 
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = make_int3(para->grid_dim);
-	int threadIdx_i = threadIdx.x;
-	int bid = GetBlockIdx1D(blockIdx_i, blockDim_i); 
-	while (threadIdx_i < block_pnum[bid]) {
-		int i = block_pidx[bid] + threadIdx_i; // for each particle[i]
+	// for each particle[i]
+	int i = MapIndex3DTo1D(blockIdx, gridDim) * GetDimTotalSize(blockDim) + threadIdx.x;
+	while (i < para->particle_num) {
 		next_pos[i] = cur_pos[i] + para->time_delta * velocity[i];
-		threadIdx_i += para->block_size;
+
+		i += GetDimTotalSize(gridDim) * GetDimTotalSize(blockDim); // gridSize * blockSize
 	}
 
 #ifdef DEBUG
@@ -454,15 +408,11 @@ __global__ void ComputePosition(	WCSPHSystem* para,
 //
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void ConfineToBoundary(	WCSPHSystem* para, curandState* devStates,
-									int* block_pidx, int* block_pnum, 
 									float3* cur_pos, float3* next_pos, float3* velocity) {
 
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = make_int3(para->grid_dim);
-	int threadIdx_i = threadIdx.x;
-	int bid = GetBlockIdx1D(blockIdx_i, blockDim_i);
-	while (threadIdx_i < block_pnum[bid]) {
-		int i = block_pidx[bid] + threadIdx_i; // for each particle[i]
+	// for each particle[i]
+	int i = MapIndex3DTo1D(blockIdx, gridDim) * GetDimTotalSize(blockDim) + threadIdx.x;
+	while (i < para->particle_num) {
 		// change position if outside
 		float3 bmin = make_float3(para->particle_radius);
 		float3 bmax = para->box_length - para->particle_radius;
@@ -506,7 +456,7 @@ __global__ void ConfineToBoundary(	WCSPHSystem* para, curandState* devStates,
 			velocity[i].y = -velocity[i].y * ETA;
 		}
 		else if (next_pos[i].y >= bmax.y) {
-			next_pos[i].y = max(bmin.y, bmax.y - (next_pos[i].y - bmax.y) * ETA);
+			next_pos[i].y = max(bmin.y, bmax.y - (next_pos[i].y - bmax.y));
 			velocity[i].y = -velocity[i].y * ETA;
 		}
 
@@ -520,7 +470,7 @@ __global__ void ConfineToBoundary(	WCSPHSystem* para, curandState* devStates,
 		}
 #endif // CONFINE_RANDOM
 
-		threadIdx_i += para->block_size;
+		i += GetDimTotalSize(gridDim) * GetDimTotalSize(blockDim); // gridSize * blockSize
 	}
 }
 
@@ -531,7 +481,6 @@ __global__ void ConfineToBoundary(	WCSPHSystem* para, curandState* devStates,
 //
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void UpdateParticles(	WCSPHSystem* para,
-									int* block_pidx, int* block_pnum,
 									float* delta_density, float* density, float* pressure, float* velocity_len,
 									float3* cur_pos, float3* next_pos, float3* velocity) {
 
@@ -540,26 +489,25 @@ __global__ void UpdateParticles(	WCSPHSystem* para,
 		printf("Block #(%d,%d,%d) Do UpdateParticles\n", blockIdx.x, blockIdx.y, blockIdx.z);
 #endif // DEBUG
 
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = make_int3(para->grid_dim);
-	int threadIdx_i = threadIdx.x;
-	int bid = GetBlockIdx1D(blockIdx_i, blockDim_i);
-	while (threadIdx_i < block_pnum[bid]) {
-		int i = block_pidx[bid] + threadIdx_i;
+	// for each particle[i]
+	int i = MapIndex3DTo1D(blockIdx, gridDim) * GetDimTotalSize(blockDim) + threadIdx.x;
+	while (i < para->particle_num) {
+		//// Density (Continuity equation, summation approach)
+		//density[i] = delta_density[i];
 
+		// Density (Continuity equation, differential update)
 		density[i] += para->time_delta * delta_density[i];
-		pressure[i] = PressureUpdate(density[i], para->rho_0, para->C_s, para->gamma);
 
-#ifdef CONFINE_RANDOM
-		velocity[i] = (next_pos[i] - cur_pos[i]) / para->time_delta;
-#endif // CONFINE_RANDOM
+		// Pressure update function (Tait¡¯s equation)
+		//pressure[i] = para->rho_0 * pow(para->C_s, 2) / para->gamma * (pow(density[i] / para->rho_0, para->gamma) - 1.0);
+		pressure[i] = PressureUpdate(density[i], para->rho_0, para->C_s, para->gamma);
 
 		velocity[i] *= (1.0 - para->f_air); // air resistence
 		velocity_len[i] = Norm2(velocity[i]);
 
 		cur_pos[i] = next_pos[i];
 
-		threadIdx_i += para->block_size;
+		i += GetDimTotalSize(gridDim) * GetDimTotalSize(blockDim); // gridSize * blockSize
 	}
 
 #ifdef DEBUG
@@ -576,19 +524,19 @@ __global__ void UpdateParticles(	WCSPHSystem* para,
 //
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void DebugOutput(		WCSPHSystem* para,
-									int* particle_bid, int* block_pidx, int* block_pnum,
+									int* particle_zidx, int* zone_pidx,
 									float* delta_density, float* density, float* pressure,
 									float3* cur_pos, float3* next_pos, float3* delta_pressure, float3* delta_viscocity, float3* delta_velocity, float3* velocity) {
 								
-	//for (int i = 0; i < para->grid_size; i++) {
-	//	printf("Block #%d:", i);
-	//	printf("     \n\t block ipdx: %d, block pnum: %d\n", block_pidx[i], block_pnum[i]);
+	//for (int i = 0; i < para->zone_size; i++) {
+	//	printf("Zone #%d:", i);
+	//	printf("     \n\t zone pidx: %d\n", zone_pidx[i]);
 	//	printf("\n");
 	//}
 
 	for (int i = 0; i < para->particle_num; i++) {
 		printf("Particle #%d:", i);
-		printf("\n\t particle_bid: %d\n\t cur_pos (%f, %f, %f)\n\t next_pos (%f, %f, %f)\n", particle_bid[i], cur_pos[i].x, cur_pos[i].y, cur_pos[i].z, next_pos[i].x, next_pos[i].y, next_pos[i].z);
+		printf("\n\t particle_bid: %d\n\t cur_pos (%f, %f, %f)\n\t next_pos (%f, %f, %f)\n", particle_zidx[i], cur_pos[i].x, cur_pos[i].y, cur_pos[i].z, next_pos[i].x, next_pos[i].y, next_pos[i].z);
 		printf("\n\t delta_density (%f)\n\t delta_pressure (%f, %f, %f)\n\t delta_viscosity (%f, %f, %f)\n\t delta_velocity (%f, %f, %f)\n", delta_density[i], delta_pressure[i].x, delta_pressure[i].y, delta_pressure[i].z, delta_viscocity[i].x, delta_viscocity[i].y, delta_viscocity[i].z, delta_velocity[i].x, delta_velocity[i].y, delta_velocity[i].z);
 		printf("\n\t density (%f)\n\t pressure (%f)\n\t velocity (%f, %f, %f)\n", density[i], pressure[i], velocity[i].x, velocity[i].y, velocity[i].z);
 		printf("\n");
@@ -681,7 +629,6 @@ __global__ void FindVelocityLenMinMax(unsigned int blockSize, float* velocity_le
 //
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void ExportParticleInfo(	WCSPHSystem* para,
-									int* block_pidx, int* block_pnum,
 									float* velocity_len, float* velo_min, float* velo_max,
 									float3* cur_pos, float3* pos_info, float3* color_info) {
 
@@ -690,12 +637,9 @@ __global__ void ExportParticleInfo(	WCSPHSystem* para,
 		printf("Block #(%d,%d,%d) Do ExportParticleInfo\n", blockIdx.x, blockIdx.y, blockIdx.z);
 #endif // DEBUG
 
-	int3 blockIdx_i = make_int3(blockIdx.x, blockIdx.y, blockIdx.z);
-	int3 blockDim_i = make_int3(para->grid_dim);
-	int threadIdx_i = threadIdx.x;
-	int bid = GetBlockIdx1D(blockIdx_i, blockDim_i);
-	while (threadIdx_i < block_pnum[bid]) {
-		int i = block_pidx[bid] + threadIdx_i;
+	// for each particle[i]
+	int i = MapIndex3DTo1D(blockIdx, gridDim) * GetDimTotalSize(blockDim) + threadIdx.x;
+	while (i < para->particle_num) {
 		pos_info[i] = cur_pos[i] - para->box_length / 2;
 
 #ifdef DYNAMIC_VELOCITY_MINMAX
@@ -706,7 +650,8 @@ __global__ void ExportParticleInfo(	WCSPHSystem* para,
 		float percent = NormalizeTo01(velocity_len[i], para->velo_draw_min, para->velo_draw_max);
 #endif
 		color_info[i] = make_float3(percent, percent, 1.0);
-		threadIdx_i += para->block_size;
+
+		i += GetDimTotalSize(gridDim) * GetDimTotalSize(blockDim); // gridSize * blockSize
 	}
 
 #ifdef DEBUG
@@ -724,7 +669,7 @@ __global__ void ExportParticleInfo(	WCSPHSystem* para,
 ////////////////////////////////////////////////////////////////////////////////
 void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource) {
 	
-	dim3 blocks(para->grid_dim.x, para->grid_dim.y, para->grid_dim.z);
+	dim3 blocks(para->grid_size);
 	dim3 threads(para->block_size);
 
 	unsigned int num = para->particle_num;
@@ -734,8 +679,14 @@ void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cu
 		//DebugOutput <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum, delta_density, density, pressure, cur_pos, next_pos, delta_pressure, delta_viscosity, delta_velocity, velocity);
 		//cudaDeviceSynchronize();
 
-		//ComputeBid <<<1, 1 >>> (sph_device, particle_bid, cur_pos);
-		ComputeBid <<<blocks, threads >>> (sph_device, particle_bid, cur_pos);
+		//thrust::fill(thrust::device, zone_pidx, zone_pidx + para->zone_size + 1, 0);
+#ifdef CUDA_MEMSET_ASYNC
+		checkCudaErrors(cudaMemsetAsync(zone_pidx, 0, (para->zone_size + 1) * sizeof(int)));
+#else
+		checkCudaErrors(cudaMemset(zone_pidx, 0, (para->zone_size + 1) * sizeof(int)));
+#endif // CUDA_MEMSET_ASYNC
+		
+		ComputeZoneIdx <<<blocks, threads >>> (sph_device, particle_zidx, zone_pidx, cur_pos);
 		cudaDeviceSynchronize();
 
 #ifdef CUDA_MEMCPY_ASYNC
@@ -744,9 +695,9 @@ void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cu
 		for (int k = 1; k < kCudaSortArrayCount; k++) {
 #ifdef CUDA_MEMCPY_ASYNC
 			checkCudaErrors(cudaStreamCreate(&stream[k]));
-			checkCudaErrors(cudaMemcpyAsync(particle_bid + num * k, particle_bid, num * sizeof(int), cudaMemcpyDeviceToDevice, stream[k]));
+			checkCudaErrors(cudaMemcpyAsync(particle_zidx + num * k, particle_zidx, num * sizeof(int), cudaMemcpyDeviceToDevice, stream[k]));
 #else
-			checkCudaErrors(cudaMemcpy(particle_bid + num * k, particle_bid, num * sizeof(int), cudaMemcpyDeviceToDevice));
+			checkCudaErrors(cudaMemcpy(particle_zidx + num * k, particle_zidx, num * sizeof(int), cudaMemcpyDeviceToDevice));
 #endif // CUDA_MEMCPY_ASYNC
 		}
 
@@ -757,28 +708,27 @@ void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cu
 		}
 #endif // CUDA_MEMCPY_ASYNC
 
-		SortParticles <<<kCudaSortArrayCount, 1 >>> (sph_device, particle_bid, density, pressure, cur_pos, velocity);
+		SortParticles <<<1, kCudaSortArrayCount >>> (sph_device, particle_zidx, zone_pidx, density, pressure, cur_pos, velocity);
 		cudaDeviceSynchronize();
 
-		ComputeBlockIdxPnum <<<1, 1 >>> (sph_device, particle_bid, block_pidx, block_pnum);
+		// get prefix sum, then pidx is the first particle index of this zone
+		thrust::exclusive_scan(thrust::device, zone_pidx, zone_pidx + para->zone_size + 1, zone_pidx);
+
+		ComputeDeltaValue <<<blocks, threads >>> (sph_device, zone_pidx, delta_density, density, pressure, cur_pos, delta_pressure, delta_viscosity, velocity);
 		cudaDeviceSynchronize();
 
-		ComputeDeltaValue <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, delta_density, density, pressure, cur_pos, delta_pressure, delta_viscosity, velocity);
+		ComputeVelocity <<<blocks, threads >>> (sph_device, cur_pos, delta_pressure, delta_viscosity, delta_velocity, velocity);
 		cudaDeviceSynchronize();
 
-		ComputeVelocity <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, density, cur_pos, delta_pressure, delta_viscosity, delta_velocity, velocity);
+		ComputePosition <<<blocks, threads >>> (sph_device, cur_pos, next_pos, velocity);
 		cudaDeviceSynchronize();
 
-		ComputePosition <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, cur_pos, next_pos, velocity);
+		ConfineToBoundary <<<blocks, threads >>> (sph_device, devStates, cur_pos, next_pos, velocity);
 		cudaDeviceSynchronize();
 
-		ConfineToBoundary <<<blocks, threads >>> (sph_device, devStates, block_pidx, block_pnum, cur_pos, next_pos, velocity);
-		cudaDeviceSynchronize();
-
-		UpdateParticles <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, delta_density, density, pressure, velocity_len, cur_pos, next_pos, velocity);
+		UpdateParticles <<<blocks, threads >>> (sph_device, delta_density, density, pressure, velocity_len, cur_pos, next_pos, velocity);
 		cudaDeviceSynchronize();
 	}
-
 
 	float3* pos_info;
 	float3* color_info;
@@ -794,16 +744,12 @@ void getNextFrame(WCSPHSystem* para, cudaGraphicsResource* position_resource, cu
 	unsigned int thread_num = para->block_size;
 	FindVelocityLenMinMax <<<1, threads, thread_num * sizeof(float)  >>> (thread_num, velocity_len, velo_min, num, true); // find min
 	cudaDeviceSynchronize();
-
 	FindVelocityLenMinMax <<<1, threads, thread_num * sizeof(float)  >>> (thread_num, velocity_len, velo_max, num, false); // find max
 	cudaDeviceSynchronize();
-	
-	ExportParticleInfo <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, velocity_len, velo_min, velo_max, cur_pos, pos_info, color_info);
-	cudaDeviceSynchronize();
-#else
-	ExportParticleInfo <<<blocks, threads >>> (sph_device, block_pidx, block_pnum, velocity_len, velo_min, velo_max, cur_pos, pos_info, color_info);
-	cudaDeviceSynchronize();
 #endif // DYNAMIC_VELOCITY_MINMAX
+
+	ExportParticleInfo <<<blocks, threads >>> (sph_device, velocity_len, velo_min, velo_max, cur_pos, pos_info, color_info);
+	cudaDeviceSynchronize();
 	
 	checkCudaErrors(cudaGraphicsUnmapResources(1, &position_resource));
 	checkCudaErrors(cudaGraphicsUnmapResources(1, &color_resource));

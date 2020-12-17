@@ -14,36 +14,40 @@ WCSPHSystem::WCSPHSystem() {
 	// WCSPH System Parameters
 	config_filename = "";
 	dim = 3;
-	particle_dim = make_int3(4, 4, 4);
-	particle_num = particle_dim.x * particle_dim.y * particle_dim.z;
+	box_length = make_float3(1.0, 1.0, 1.0);
+	box_margin = make_float3(0.3, 0.3, 0.3);
+	zone_dim = dim3(25, 25, 25); // zone_dim should <= box_length/2h
+	zone_size = GetDimTotalSize(zone_dim);
+	zone_length = box_length / zone_dim; // zone_length should >= 2h
 	gravity = -9.8 * 30;
 	eta = 0.8; // confine boundary loss coefficient
 	f_air = 0.001; // air_resistance
+	time_delta = 0.00002; // 0.4 * h / C_s
 
 	// Particles Parameters
+	particle_dim = dim3(4, 4, 4);
+	particle_num = GetDimTotalSize(particle_dim);
 	particle_radius = 0.1;
+	h = 1.3 * particle_radius;
 	mass = 4.0 / 3.0 * M_PI * rho_0 * pow(particle_radius, dim);
-	velo_init_min = make_float3(0, -1, 0);
+	velo_init_min = make_float3(-0.1, -1, -0.1);
 	velo_init_max = make_float3(0.1, -1, 0.1);
-	velo_draw_min = 0.0;
-	velo_draw_max = 20.0;
 
 	// Draw Parameters
 	step_each_frame = 5;
-	box_length = make_float3(1.0, 1.0, 1.0);
-	box_margin = 0.1 * box_length;
+	velo_draw_min = 0.0;
+	velo_draw_max = 20.0;
 
 	// Device Parameters
-	grid_dim = dim3(3, 3, 3);
-	grid_size = grid_dim.x * grid_dim.y * grid_dim.z;
-	block_length = box_length / grid_dim; // grid_dim <= 3/(4 * cutoff) = 3/(4 * 1.3 radius)
+	//grid_dim = dim3(4, 4, 4);
+	grid_size = 1024;
+	//block_dim = dim3(8, 8, 8);
 	block_size = 256;
 
 	// Function Parameters
 	alpha = 0.3; // between 0.08 and 0.5
 	C_s = 200; // sqrt((2 * gravity * Height of particle + pow(initial velocity, 2)) / 0.01) 
 	gamma = 7.0;
-	h = 1.3 * particle_radius;
 	rho_0 = 1000.0;  // reference density
 	CFL_a = 0.20;
 	CFL_v = 0.20;
@@ -53,12 +57,9 @@ WCSPHSystem::WCSPHSystem() {
 	cubic_factor1D = 2.0 / 3.0 / M_PI;
 	cubic_factor2D = 10.0 / 7.0 / M_PI;
 	cubic_factor3D = 1.0 / M_PI;
-	time_delta = 0.1 * h / C_s; // 0.4 * h / C_s
 }
 
-
 WCSPHSystem::~WCSPHSystem() {}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -81,34 +82,38 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 
 	// WCSPH System Parameters
 	sys->dim = config["dim"].get<int>();
-	sys->particle_dim = make_int3(GetJsonVectorValue(config, "particle_dim"));
-	sys->particle_num = sys->particle_dim.x * sys->particle_dim.y * sys->particle_dim.z;
+	sys->box_length = GetJsonVectorValue(config, "box_length");
+	sys->box_margin = GetJsonVectorValue(config, "box_margin_coefficient") * sys->box_length;
+	sys->zone_dim = dim3(make_uint3(make_int3(GetJsonVectorValue(config, "zone_dim")))); // zone_dim calculated at last
+	sys->zone_size = GetDimTotalSize(sys->zone_dim); // zone_size calculated at last
+	sys->zone_length = sys->box_length / sys->zone_dim; // zone_length calculated at last
 	sys->eta = config["eta"].get<float>();
 	sys->f_air = config["f_air"].get<float>();
 	sys->gravity = config["gravity"].get<float>() * config["gravity_coefficient"].get<float>();
+	sys->time_delta = config["time_delta"].get<float>(); // time_delta calculated at last
 
 	// Particles Parameters
+	sys->particle_dim = dim3(make_uint3(make_int3(GetJsonVectorValue(config, "particle_dim"))));
+	sys->particle_num = GetDimTotalSize(sys->particle_dim);
 	sys->particle_radius = config["particle_radius"].get<float>();
+	sys->h = config["h_coefficient"].get<float>() * sys->particle_radius;
+	sys->mass = config["mass"].get<float>(); // mass calculated at last
 	sys->velo_init_min = GetJsonVectorValue(config, "velo_init_min");
 	sys->velo_init_max = GetJsonVectorValue(config, "velo_init_max");
 
 	// Draw Parameters
 	sys->step_each_frame = config["step_each_frame"].get<int>();
-	sys->box_length = GetJsonVectorValue(config, "box_length");
-	sys->box_margin = GetJsonVectorValue(config, "box_margin_coefficient") * sys->box_length;
 	sys->velo_draw_min = config["velo_draw_min"].get<float>();
 	sys->velo_draw_max = config["velo_draw_max"].get<float>();
 
 	// Device Parameters
-	sys->grid_dim = dim3(make_uint3(make_int3(GetJsonVectorValue(config, "grid_dim"))));
-	sys->grid_size = GetDimTotalSize(sys->grid_dim);
-	sys->block_length = sys->box_length / sys->grid_dim;
+	sys->grid_size = config["grid_size"].get<uint>();
 	sys->block_size = config["block_size"].get<uint>();
 
 	// Function Parameters
 	sys->alpha = config["alpha"].get<float>();
+	sys->C_s = config["C_s"].get<float>(); // C_s will be caculated at last
 	sys->gamma = config["gamma"].get<float>();
-	sys->h = config["h_coefficient"].get<float>() * sys->particle_radius;
 	sys->rho_0 = config["rho_0"].get<float>();
 	sys->CFL_a = config["CFL_a"].get<float>();
 	sys->CFL_v = config["CFL_v"].get<float>();
@@ -120,6 +125,9 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 	sys->cubic_factor3D = config["cubic_factor_coefficient3D1"].get<float>() / config["cubic_factor_coefficient3D2"].get<float>() / M_PI;
 
 	// calculated para
+	sys->zone_dim = dim3(make_uint3(make_int3(sys->box_length / (2 * sys->h))));
+	sys->zone_size = GetDimTotalSize(sys->zone_dim);
+	sys->zone_length = sys->box_length / sys->zone_dim;
 	sys->mass = 4.0 / 3.0 * M_PI * sys->rho_0 * pow(sys->particle_radius, sys->dim);
 	sys->C_s = sqrt((2 * fabs(sys->gravity) * sys->box_length.y + pow(sys->velo_init_min.y, 2)) / 0.01);
 	sys->time_delta = config["time_delta_coefficient"].get<float>() * sys->h / sys->C_s;
@@ -157,7 +165,7 @@ WCSPHSystem::WCSPHSystem(char* filename = "config/WCSPH_config.json") {
 
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Print settings to console
+// Print out the parameter settings
 // 
 ////////////////////////////////////////////////////////////////////////////////
 void WCSPHSystem::Print() {
@@ -166,15 +174,22 @@ void WCSPHSystem::Print() {
 	std::cout << "WCSPH System Parameters" << std::endl;
 	std::cout << "\t config_filename: " << config_filename << std::endl;
 	std::cout << "\t dim: " << dim << std::endl;
-	std::cout << "\t particle_dim: " << particle_dim << std::endl;
-	std::cout << "\t particle_num: " << particle_num << std::endl;
+	std::cout << "\t box_length: " << box_length << std::endl;
+	std::cout << "\t box_margin: " << box_margin << std::endl;
+	std::cout << "\t zone_dim: " << zone_dim << std::endl;
+	std::cout << "\t zone_size: " << zone_size << std::endl;
+	std::cout << "\t zone_length: " << zone_length << std::endl;
 	std::cout << "\t eta: " << eta << std::endl;
 	std::cout << "\t f_air: " << f_air << std::endl;
 	std::cout << "\t gravity: " << gravity << std::endl;
+	std::cout << "\t time_delta: " << time_delta << std::endl;
 
 	// Particles Parameters
 	std::cout << "Particles Parameters" << std::endl;
+	std::cout << "\t particle_dim: " << particle_dim << std::endl;
+	std::cout << "\t particle_num: " << particle_num << std::endl;
 	std::cout << "\t particle_radius: " << particle_radius << std::endl;
+	std::cout << "\t h: " << h << std::endl;
 	std::cout << "\t mass: " << mass << std::endl;
 	std::cout << "\t velo_init_min: " << velo_init_min << std::endl;
 	std::cout << "\t velo_init_max: " << velo_init_max << std::endl;
@@ -182,17 +197,15 @@ void WCSPHSystem::Print() {
 	// Draw Parameters
 	std::cout << "Draw Parameters" << std::endl;
 	std::cout << "\t step_each_frame: " << step_each_frame << std::endl;
-	std::cout << "\t box_length: " << box_length << std::endl;
-	std::cout << "\t box_margin: " << box_margin << std::endl;
 	std::cout << "\t velo_draw_min: " << velo_draw_min << std::endl;
 	std::cout << "\t velo_draw_max: " << velo_draw_max << std::endl;
 
 
 	// Device Parameters
 	std::cout << "Device Parameters" << std::endl;
-	std::cout << "\t grid_dim: " << grid_dim << std::endl;
+	//std::cout << "\t grid_dim: " << grid_dim << std::endl;
 	std::cout << "\t grid_size: " << grid_size << std::endl;
-	std::cout << "\t block_length: " << block_length << std::endl;
+	//std::cout << "\t block_dim: " << block_dim << std::endl;
 	std::cout << "\t block_size: " << block_size << std::endl;
 
 	// Function Parameters
@@ -200,7 +213,6 @@ void WCSPHSystem::Print() {
 	std::cout << "\t alpha: " << alpha << std::endl;
 	std::cout << "\t C_s: " << C_s << std::endl;
 	std::cout << "\t gamma: " << gamma << std::endl;
-	std::cout << "\t h: " << h << std::endl;
 	std::cout << "\t rho_0: " << rho_0 << std::endl;
 	std::cout << "\t CFL_a: " << CFL_a << std::endl;
 	std::cout << "\t CFL_v: " << CFL_v << std::endl;
@@ -210,7 +222,6 @@ void WCSPHSystem::Print() {
 	std::cout << "\t cubic_factor1D: " << cubic_factor1D << std::endl;
 	std::cout << "\t cubic_factor2D: " << cubic_factor2D << std::endl;
 	std::cout << "\t cubic_factor3D: " << cubic_factor3D << std::endl;
-	std::cout << "\t time_delta: " << time_delta << std::endl;
 	
 	std::cout << "======================= END ==========================" << std::endl;
 }
@@ -245,7 +256,7 @@ float3* WCSPHSystem::InitializePosition() {
 			for (int k = 0; k < particle_dim.z; k++)
 			{
 				int3 ii = make_int3(i, j, k);
-				int index = GetBlockIdx1D(ii, particle_dim);
+				int index = MapIndex3DTo1D(ii, particle_dim);
 				float3 p = particle_gap * (ii + 1);
 				pos_init[index] = box_margin + p;
 			}

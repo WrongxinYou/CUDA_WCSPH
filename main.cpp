@@ -77,9 +77,9 @@ void initFluidSystem() {
 	sph_host = new WCSPHSystem("config/WCSPH_config.json");
 	sph_host->Print();
 
-	int dim_max = ceil(3 / (4 * sph_host->h));
-	if (!(sph_host->grid_dim <= dim3(dim_max, dim_max, dim_max))) {
-		std::cout << "WARNING: block_dimension is too large, please decrease it" << std::endl;
+	float3 length_min = make_float3(2 * sph_host->h);
+	if (!(sph_host->zone_length >= length_min)) {
+		std::cout << "WARNING: zone_dim is too large, zone_length is too small, please decrease it!" << std::endl;
 	}
 
 	pos_init = sph_host->InitializePosition();
