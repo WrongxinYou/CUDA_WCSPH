@@ -84,20 +84,20 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 	sys->dim = config["dim"].get<int>();
 	sys->box_length = GetJsonVectorValue(config, "box_length");
 	sys->box_margin = GetJsonVectorValue(config, "box_margin_coefficient") * sys->box_length;
-	sys->zone_dim = dim3(make_uint3(make_int3(GetJsonVectorValue(config, "zone_dim")))); // zone_dim calculated at last
-	sys->zone_size = GetDimTotalSize(sys->zone_dim); // zone_size calculated at last
-	sys->zone_length = sys->box_length / sys->zone_dim; // zone_length calculated at last
+	sys->zone_dim = dim3(make_uint3(make_int3(GetJsonVectorValue(config, "zone_dim")))); // zone_dim will be recalculated at last
+	sys->zone_size = GetDimTotalSize(sys->zone_dim); // zone_size will be recalculated at last
+	sys->zone_length = sys->box_length / sys->zone_dim; // zone_length will be recalculated at last
 	sys->eta = config["eta"].get<float>();
 	sys->f_air = config["f_air"].get<float>();
 	sys->gravity = config["gravity"].get<float>() * config["gravity_coefficient"].get<float>();
-	sys->time_delta = config["time_delta"].get<float>(); // time_delta calculated at last
+	sys->time_delta = config["time_delta"].get<float>(); // time_delta will be recalculated at last
 
 	// Particles Parameters
 	sys->particle_dim = dim3(make_uint3(make_int3(GetJsonVectorValue(config, "particle_dim"))));
 	sys->particle_num = GetDimTotalSize(sys->particle_dim);
 	sys->particle_radius = config["particle_radius"].get<float>();
 	sys->h = config["h_coefficient"].get<float>() * sys->particle_radius;
-	sys->mass = config["mass"].get<float>(); // mass calculated at last
+	sys->mass = config["mass"].get<float>(); // mass will be recalculated at last
 	sys->velo_init_min = GetJsonVectorValue(config, "velo_init_min");
 	sys->velo_init_max = GetJsonVectorValue(config, "velo_init_max");
 
@@ -112,7 +112,7 @@ void ConstructFromJson(WCSPHSystem* sys, json config) {
 
 	// Function Parameters
 	sys->alpha = config["alpha"].get<float>();
-	sys->C_s = config["C_s"].get<float>(); // C_s will be caculated at last
+	sys->C_s = config["C_s"].get<float>(); // C_s will be recaculated at last
 	sys->gamma = config["gamma"].get<float>();
 	sys->rho_0 = config["rho_0"].get<float>();
 	sys->CFL_a = config["CFL_a"].get<float>();
