@@ -1,11 +1,11 @@
-# Real Time WCSPH Fluid Simulation
+# Real Time 3D WCSPH Fluid Simulation
 
 ## Description
 Weakly compressible Smoothed-particle hydrodynamics (WCSPH), as one of the fluid simulation methods, is widely used in games, graphics and medical industry. Though there are several ways of accelerating SPH in CPU, GPU has an ideal structure for the computation of SPH. This project implements a SPH solver on GPU using CUDA, and use OpenGL for rendering fluid particles.  
 
 ## Environment
 Windows + Visual Studio  
-Language and Libraries: C++, CUDA, OpenGL, GLSL, GLM
+Language and Libraries: C/C++, CUDA, OpenGL, GLSL, GLM
 
 ## Features
 - Real time 3D SPH fluid simulation. 
@@ -19,8 +19,8 @@ Language and Libraries: C++, CUDA, OpenGL, GLSL, GLM
 The most time consuming part in SPH simulation is neighbor search. Previously, neighbor search was executed on CPU. As the number of particles increases, the running time of neighbor search will increase dramatically. In order to make more use of GPU, here we implement neighborhood searching on GPU. The method is applying radix sort for particles. We divide the space into different small zones. Thus each zone just need to store the index of first particle inside. Then we compute density, pressure, viscosity and velocity for position update.  
 
 Each zone takes care of all the particles inside and each thread takes care of a single particle. When searching in neighbors, the zone gets neighborhood information using zone index.
-<img src="data/fig/CUDA Block.png" width="500">  
-<img src="data/fig/CUDA Block and threads.png" width="500">  
+<img src="data/fig/CUDA_block.png" width="500">  
+<img src="data/fig/CUDA_block_and_threads.png" width="500">  
 
 The space allocation on CPU and GPU is as below. We do not allocate any space for particles on CPU as all the computation are executed on GPU. Only two pointers for mapping color and position information from GPU memory. 
 <img src="data/fig/space_alloc.png" width="500">  
