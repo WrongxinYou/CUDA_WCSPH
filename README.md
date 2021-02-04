@@ -7,15 +7,15 @@ Weakly compressible Smoothed-particle hydrodynamics (WCSPH), as one of the fluid
 
 ## Environment
 Windows + Visual Studio  
-Language and Libraries: C/C++, CUDA, OpenGL, GLSL, GLM
+Language and Libraries: C, C++, CUDA, OpenGL, GLSL, GLM
 
 
 ## Features
-- Real time 3D SPH fluid simulation. 
-- CUDA OpenGL Interpolation (map CUDA address to host). 
+- Real time 3D SPH fluid simulation.  
 - SPH solver on GPU, including radix sorting, force computation and position update. 
 - Adaptive timestep available. 
-- Allow user interaction to change viewpoint, scale and rotate objects.   
+- CUDA interoperation with OpenGL (directly use device address for rendering).
+- Allow user interaction to change viewpoint, scale and rotate objects. 
 
 
 ## Solution
@@ -36,7 +36,7 @@ The space allocation on CPU and GPU is as below. We do not allocate any space fo
 The computation in each time step for density, pressure, viscosity, velocity and position is described in this [paper](https://cg.informatik.uni-freiburg.de/publications/2007_SCA_SPH.pdf). We choose a cubic kernel function and its derivative as our filter and add adaptive time step to avoid particle explosion.
 
 ### Particle Visualization
-CUDA supports interpolate with OpenGL, which helps map device data to host. In order to reach higher FPS, particles are rendered using GLSL shaders. In vertex shader, it sets up particle size based on the distance between camera and the particle. In fragment shader, it renders a circle with edges and shadow. Rendering a dot to a sphere uses less time than directly rendering a sphere and needs less computation.  
+CUDA supports interoperability with OpenGL, which helps map device data to host. In order to reach higher FPS, particles are rendered using GLSL shaders. In vertex shader, it sets up particle size based on the distance between camera and the particle. In fragment shader, it renders a circle with edges and shadow. Rendering a dot to a sphere uses less time than directly rendering a sphere and needs less computation.  
 
 
 ## Result
