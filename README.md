@@ -41,7 +41,7 @@ CUDA supports interpolate with OpenGL, which helps map device data to host. In o
 
 ## Result
 
-Velocity are color coded (blue = min, white = max)
+Velocities are color coded (blue = min, white = max)
 
 <img src="data/fig/CUDA_WCSPH.gif" width="500">  
 
