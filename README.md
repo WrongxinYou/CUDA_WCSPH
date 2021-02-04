@@ -16,9 +16,11 @@ Language and Libraries: C/C++, CUDA, OpenGL, GLSL, GLM
 
 ## Solution
 ### Fluid Simulation
-The most time consuming part in SPH simulation is neighbor search. Previously, neighbor search was executed on CPU. As the number of particles increases, the running time of neighbor search will increase dramatically. In order to make more use of GPU, here we implement neighborhood searching on GPU. The method is applying radix sort for particles. We divide the space into different small zones. Thus each zone just need to store the index of first particle inside. Then we compute density, pressure, viscosity and velocity for position update.  
+The most time consuming part in SPH simulation is neighbor search. Previously, neighbor search was executed on CPU. As the number of particles increases, the running time of neighbor search will increase dramatically. In order to decrease the runtime, here we implement neighborhood searching on GPU. 
 
-Each zone takes care of all the particles inside and each thread takes care of a single particle. When searching in neighbors, the zone gets neighborhood information using zone index.
+One method is applying radix sort for particles. We divide the space into different small zones. Thus each zone just need to store the index of first particle inside. And we can calculate the number of particles inside one zone easily. Then we compute density, pressure, viscosity and velocity for position update.  
+
+Each zone is assigned to one CUDA block, and it takes care of all the particles inside. And in one CUDA block, each thread takes care of a single particle. When searching in neighbors, one zone gets its 26 neighborhood information according to zone index.
 <img src="data/fig/CUDA_block.png" width="500">  
 <img src="data/fig/CUDA_block_and_threads.png" width="500">  
 

@@ -114,4 +114,81 @@ void FreeDeviceSystem(WCSPHSystem* para);
 //
 void getNextFrame(WCSPHSystem* sys, cudaGraphicsResource* position_resource, cudaGraphicsResource* color_resource);
 
+////////////////////////////////////////////////////////////////////////////////
+
+//
+// Compute which zone each particle belongs to
+//
+__global__ void ComputeZoneIdx(WCSPHSystem* para,
+	int* particle_zidx, int* zone_pidx,
+	float3* cur_pos);
+
+//
+// Use Radix sort to place particle in zone order
+//
+__global__ void SortParticles(WCSPHSystem* para,
+	int* particle_zidx, int* zone_pidx,
+	float* density, float* pressure,
+	float3* cur_pos, float3* velocity);
+
+//
+// Compute delta value of density, pressure and viscosity for each particle
+//
+__global__ void ComputeDeltaValue(WCSPHSystem* para,
+	int* zone_pidx,
+	float* delta_density, float* density, float* pressure,
+	float3* cur_pos, float3* delta_pressure, float3* delta_viscosity, float3* velocity);
+
+// 
+// Compute delta_velocity and velocity using delta_pressure and delta_viscosity for each particle
+// 
+__global__ void ComputeVelocity(WCSPHSystem* para,
+	float3* cur_pos, float3* delta_pressure, float3* delta_viscosity, float3* delta_velocity, float3* velocity);
+
+//
+// Compute new position using velocity for each particle
+//
+__global__ void ComputePosition(WCSPHSystem* para,
+	float3* cur_pos, float3* next_pos, float3* velocity);
+
+//
+// If particle exceed the boundary, confine it to the inside, change the velocity and position
+//
+__global__ void ConfineToBoundary(WCSPHSystem* para, curandState* devStates,
+	float3* cur_pos, float3* next_pos, float3* velocity);
+
+//
+// Update the new density, pressure, velocity and position for each particle
+//
+__global__ void UpdateParticles(WCSPHSystem* para,
+	float* delta_density, float* density, float* pressure, float* velocity_len,
+	float3* cur_pos, float3* next_pos, float3* velocity);
+
+//
+// Use for debug, output the variable value on gpu
+//
+__global__ void DebugOutput(WCSPHSystem* para,
+	int* particle_zidx, int* zone_pidx,
+	float* delta_density, float* density, float* pressure,
+	float3* cur_pos, float3* next_pos, float3* delta_pressure, float3* delta_viscocity, float3* delta_velocity, float3* velocity);
+
+//
+// Smartly choose the time step to calculate
+//
+__global__ void AdaptiveStep(WCSPHSystem* para,
+	float* density,
+	float3* delta_velocity, float3* velocity);
+
+//
+// Find maximum and minimum value of velocity_len for each particle
+//
+__global__ void FindVelocityLenMinMax(unsigned int blockSize, float* velocity_len, float* g_odata, unsigned int num, bool findmin);
+
+//
+// Export particle information to VBO for drawing, blue(0, 0, 1) is slow, white(1, 1, 1) is fast
+//
+__global__ void ExportParticleInfo(WCSPHSystem* para,
+	float* velocity_len, float* velo_min, float* velo_max,
+	float3* cur_pos, float3* pos_info, float3* color_info);
+
 #endif // !WCSPHSOLVER_CUH

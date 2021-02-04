@@ -86,6 +86,7 @@ inline __HOSTDEV__ unsigned int GetDimTotalSize(T idx) { return idx.x * idx.y * 
 
 // check whether index is within dimension
 inline __HOSTDEV__ bool IsIndexValid(dim3 index, const dim3 dimension) { return index < dimension; }
+inline __HOSTDEV__ bool IsIndexValid(uint3 index, const dim3 dimension) { return dim3(index) < dimension; }
 inline __HOSTDEV__ bool IsIndexValid(int3 index, const dim3 dimension) { return make_int3(0) <= index && index < make_int3(dimension); }
 
 // index mapping from 3D to 1D
